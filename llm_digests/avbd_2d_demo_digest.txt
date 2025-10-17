@@ -1,0 +1,2680 @@
+Directory structure:
+└── savant117-avbd-demo2d/
+    ├── README.md
+    └── source/
+        ├── collide.cpp
+        ├── force.cpp
+        ├── joint.cpp
+        ├── main.cpp
+        ├── manifold.cpp
+        ├── maths.h
+        ├── motor.cpp
+        ├── rigid.cpp
+        ├── scenes.h
+        ├── shell.html
+        ├── solver.cpp
+        ├── solver.h
+        └── spring.cpp
+
+================================================
+FILE: README.md
+================================================
+# avbd-demo2d
+
+This is a simple 2D implementation of Augmented Vertex Block Decent (AVBD).
+
+For more details on the technique (including a pre-built web demo) see the project page: https://graphics.cs.utah.edu/research/projects/avbd/
+
+This repository is not intended to be a super optimized implementation, but an easy to understand demonstration of how to implement the technique.
+
+## Building
+
+Checkout the code and submodules using:
+
+```git clone --recurse-submodules https://github.com/savant117/avbd-demo2d```
+
+Make sure you have cmake and a c++ compiler installed.
+
+To build:
+
+### Native
+
+```
+mkdir build
+cd build
+cmake ..
+cmake --build . --config Release
+```
+
+To run, launch Release/avbd_demo2d.
+
+### Web
+
+Install emscripten: https://emscripten.org/docs/getting_started/downloads.html
+
+Install ninja
+
+On Windows, ninja can be installed with:
+
+```winget install Ninja-build.Ninja```
+
+To build:
+
+```
+mkdir build-web
+cd build-web
+emcmake cmake ..
+ninja
+```
+
+To run, open avbd_demo2d.html in your browser.
+
+
+================================================
+FILE: source/collide.cpp
+================================================
+
+// Copied and modified from box2D-lite: https://github.com/erincatto/box2d-lite
+
+/*
+MIT License
+
+Copyright (c) 2019 Erin Catto
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+#include "solver.h"
+
+// Box vertex and edge numbering:
+//
+//        ^ y
+//        |
+//        e1
+//   v2 ------ v1
+//    |        |
+// e2 |        | e4  --> x
+//    |        |
+//   v3 ------ v4
+//        e3
+
+enum Axis
+{
+	FACE_A_X,
+	FACE_A_Y,
+	FACE_B_X,
+	FACE_B_Y
+};
+
+enum EdgeNumbers
+{
+	NO_EDGE = 0,
+	EDGE1,
+	EDGE2,
+	EDGE3,
+	EDGE4
+};
+
+struct ClipVertex
+{
+	ClipVertex() { fp.value = 0; }
+	float2 v;
+	Manifold::FeaturePair fp;
+};
+
+static void Flip(Manifold::FeaturePair& fp)
+{
+	char temp = fp.e.inEdge1;
+	fp.e.inEdge1 = fp.e.inEdge2;
+	fp.e.inEdge2 = temp;
+
+	temp = fp.e.outEdge1;
+	fp.e.outEdge1 = fp.e.outEdge2;
+	fp.e.outEdge2 = temp;
+}
+
+static int ClipSegmentToLine(ClipVertex vOut[2], ClipVertex vIn[2],
+	const float2& normal, float offset, char clipEdge)
+{
+	// Start with no output points
+	int numOut = 0;
+
+	// Calculate the distance of end points to the line
+	float distance0 = dot(normal, vIn[0].v) - offset;
+	float distance1 = dot(normal, vIn[1].v) - offset;
+
+	// If the points are behind the plane
+	if (distance0 <= 0.0f) vOut[numOut++] = vIn[0];
+	if (distance1 <= 0.0f) vOut[numOut++] = vIn[1];
+
+	// If the points are on different sides of the plane
+	if (distance0 * distance1 < 0.0f)
+	{
+		// Find intersection point of edge and plane
+		float interp = distance0 / (distance0 - distance1);
+		vOut[numOut].v = vIn[0].v + (vIn[1].v - vIn[0].v) * interp;
+		if (distance0 > 0.0f)
+		{
+			vOut[numOut].fp = vIn[0].fp;
+			vOut[numOut].fp.e.inEdge1 = clipEdge;
+			vOut[numOut].fp.e.inEdge2 = NO_EDGE;
+		}
+		else
+		{
+			vOut[numOut].fp = vIn[1].fp;
+			vOut[numOut].fp.e.outEdge1 = clipEdge;
+			vOut[numOut].fp.e.outEdge2 = NO_EDGE;
+		}
+		++numOut;
+	}
+
+	return numOut;
+}
+
+static void ComputeIncidentEdge(ClipVertex c[2], const float2& h, const float2& pos,
+	const float2x2& Rot, const float2& normal)
+{
+	// The normal is from the reference box. Convert it
+	// to the incident boxe's frame and flip sign.
+	float2x2 RotT = transpose(Rot);
+	float2 n = -(RotT * normal);
+	float2 nAbs = abs(n);
+
+	if (nAbs.x > nAbs.y)
+	{
+		if (sign(n.x) > 0.0f)
+		{
+			c[0].v = float2{ h.x, -h.y };
+			c[0].fp.e.inEdge2 = EDGE3;
+			c[0].fp.e.outEdge2 = EDGE4;
+
+			c[1].v = float2{ h.x, h.y };
+			c[1].fp.e.inEdge2 = EDGE4;
+			c[1].fp.e.outEdge2 = EDGE1;
+		}
+		else
+		{
+			c[0].v = float2{ -h.x, h.y };
+			c[0].fp.e.inEdge2 = EDGE1;
+			c[0].fp.e.outEdge2 = EDGE2;
+
+			c[1].v = float2{ -h.x, -h.y };
+			c[1].fp.e.inEdge2 = EDGE2;
+			c[1].fp.e.outEdge2 = EDGE3;
+		}
+	}
+	else
+	{
+		if (sign(n.y) > 0.0f)
+		{
+			c[0].v = float2{ h.x, h.y };
+			c[0].fp.e.inEdge2 = EDGE4;
+			c[0].fp.e.outEdge2 = EDGE1;
+
+			c[1].v = float2{ -h.x, h.y };
+			c[1].fp.e.inEdge2 = EDGE1;
+			c[1].fp.e.outEdge2 = EDGE2;
+		}
+		else
+		{
+			c[0].v = float2{ -h.x, -h.y };
+			c[0].fp.e.inEdge2 = EDGE2;
+			c[0].fp.e.outEdge2 = EDGE3;
+
+			c[1].v = float2{ h.x, -h.y };
+			c[1].fp.e.inEdge2 = EDGE3;
+			c[1].fp.e.outEdge2 = EDGE4;
+		}
+	}
+
+	c[0].v = pos + Rot * c[0].v;
+	c[1].v = pos + Rot * c[1].v;
+}
+
+// The normal points from A to B
+int Manifold::collide(Rigid* bodyA, Rigid* bodyB, Contact* contacts)
+{
+	float2 normal;
+
+	// Setup
+	float2 hA = bodyA->size * 0.5f;
+	float2 hB = bodyB->size * 0.5f;
+
+	float2 posA = bodyA->position.xy();
+	float2 posB = bodyB->position.xy();
+
+	float2x2 RotA = rotation(bodyA->position.z), RotB = rotation(bodyB->position.z);
+
+	float2x2 RotAT = transpose(RotA);
+	float2x2 RotBT = transpose(RotB);
+
+	float2 dp = posB - posA;
+	float2 dA = RotAT * dp;
+	float2 dB = RotBT * dp;
+
+	float2x2 C = RotAT * RotB;
+	float2x2 absC = abs(C);
+	float2x2 absCT = transpose(absC);
+
+	// Box A faces
+	float2 faceA = abs(dA) - hA - absC * hB;
+	if (faceA.x > 0.0f || faceA.y > 0.0f)
+		return 0;
+
+	// Box B faces
+	float2 faceB = abs(dB) - absCT * hA - hB;
+	if (faceB.x > 0.0f || faceB.y > 0.0f)
+		return 0;
+
+	// Find best axis
+	Axis axis;
+	float separation;
+
+	// Box A faces
+	axis = FACE_A_X;
+	separation = faceA.x;
+	if (dA.x > 0.0f) normal = RotA.col(0);
+	else normal = -RotA.col(0);
+
+	const float relativeTol = 0.95f;
+	const float absoluteTol = 0.01f;
+
+	if (faceA.y > relativeTol * separation + absoluteTol * hA.y)
+	{
+		axis = FACE_A_Y;
+		separation = faceA.y;
+		if (dA.y > 0.0f) normal = RotA.col(1);
+		else normal = -RotA.col(1);
+	}
+
+	// Box B faces
+	if (faceB.x > relativeTol * separation + absoluteTol * hB.x)
+	{
+		axis = FACE_B_X;
+		separation = faceB.x;
+		if (dB.x > 0.0f) normal = RotB.col(0);
+		else normal = -RotB.col(0);
+	}
+
+	if (faceB.y > relativeTol * separation + absoluteTol * hB.y)
+	{
+		axis = FACE_B_Y;
+		separation = faceB.y;
+		if (dB.y > 0.0f) normal = RotB.col(1);
+		else normal = -RotB.col(1);
+	}
+
+	// Setup clipping plane data based on the separating axis
+	float2 frontNormal, sideNormal;
+	ClipVertex incidentEdge[2];
+	float front, negSide, posSide;
+	char negEdge, posEdge;
+
+	// Compute the clipping lines and the line segment to be clipped.
+	switch (axis)
+	{
+	case FACE_A_X:
+	{
+		frontNormal = normal;
+		front = dot(posA, frontNormal) + hA.x;
+		sideNormal = RotA.col(1);
+		float side = dot(posA, sideNormal);
+		negSide = -side + hA.y;
+		posSide = side + hA.y;
+		negEdge = EDGE3;
+		posEdge = EDGE1;
+		ComputeIncidentEdge(incidentEdge, hB, posB, RotB, frontNormal);
+	}
+	break;
+
+	case FACE_A_Y:
+	{
+		frontNormal = normal;
+		front = dot(posA, frontNormal) + hA.y;
+		sideNormal = RotA.col(0);
+		float side = dot(posA, sideNormal);
+		negSide = -side + hA.x;
+		posSide = side + hA.x;
+		negEdge = EDGE2;
+		posEdge = EDGE4;
+		ComputeIncidentEdge(incidentEdge, hB, posB, RotB, frontNormal);
+	}
+	break;
+
+	case FACE_B_X:
+	{
+		frontNormal = -normal;
+		front = dot(posB, frontNormal) + hB.x;
+		sideNormal = RotB.col(1);
+		float side = dot(posB, sideNormal);
+		negSide = -side + hB.y;
+		posSide = side + hB.y;
+		negEdge = EDGE3;
+		posEdge = EDGE1;
+		ComputeIncidentEdge(incidentEdge, hA, posA, RotA, frontNormal);
+	}
+	break;
+
+	case FACE_B_Y:
+	{
+		frontNormal = -normal;
+		front = dot(posB, frontNormal) + hB.y;
+		sideNormal = RotB.col(0);
+		float side = dot(posB, sideNormal);
+		negSide = -side + hB.x;
+		posSide = side + hB.x;
+		negEdge = EDGE2;
+		posEdge = EDGE4;
+		ComputeIncidentEdge(incidentEdge, hA, posA, RotA, frontNormal);
+	}
+	break;
+	}
+
+	// clip other face with 5 box planes (1 face plane, 4 edge planes)
+
+	ClipVertex clipPoints1[2];
+	ClipVertex clipPoints2[2];
+	int np;
+
+	// Clip to box side 1
+	np = ClipSegmentToLine(clipPoints1, incidentEdge, -sideNormal, negSide, negEdge);
+
+	if (np < 2)
+		return 0;
+
+	// Clip to negative box side 1
+	np = ClipSegmentToLine(clipPoints2, clipPoints1, sideNormal, posSide, posEdge);
+
+	if (np < 2)
+		return 0;
+
+	// Now clipPoints2 contains the clipping points.
+	// Due to roundoff, it is possible that clipping removes all points.
+
+	int numContacts = 0;
+	for (int i = 0; i < 2; ++i)
+	{
+		float separation = dot(frontNormal, clipPoints2[i].v) - front;
+
+		if (separation <= 0)
+		{
+			contacts[numContacts].normal = -normal;
+
+			// slide contact point onto reference face (easy to cull)
+			contacts[numContacts].rA = transpose(RotA) * (clipPoints2[i].v - frontNormal * separation - posA);
+			contacts[numContacts].rB = transpose(RotB) * (clipPoints2[i].v - posB);
+			contacts[numContacts].feature = clipPoints2[i].fp;
+
+			if (axis == FACE_B_X || axis == FACE_B_Y)
+			{
+				Flip(contacts[numContacts].feature);
+				contacts[numContacts].rA = transpose(RotA) * (clipPoints2[i].v - posA);
+				contacts[numContacts].rB = transpose(RotB) * (clipPoints2[i].v - frontNormal * separation - posB);
+			}
+			++numContacts;
+		}
+	}
+
+	return numContacts;
+}
+
+
+================================================
+FILE: source/force.cpp
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#include "solver.h"
+
+Force::Force(Solver* solver, Rigid* bodyA, Rigid* bodyB)
+    : solver(solver), bodyA(bodyA), bodyB(bodyB), nextA(0), nextB(0)
+{
+    // Add to solver linked list
+    next = solver->forces;
+    solver->forces = this;
+
+    // Add to body linked lists
+    if (bodyA)
+    {
+        nextA = bodyA->forces;
+        bodyA->forces = this;
+    }
+    if (bodyB)
+    {
+        nextB = bodyB->forces;
+        bodyB->forces = this;
+    }
+
+    // Set some reasonable defaults
+    for (int i = 0; i < MAX_ROWS; i++)
+    {
+        J[i] = { 0, 0, 0 };
+        H[i] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+        C[i] = 0.0f;
+        stiffness[i] = INFINITY;
+        fmax[i] = INFINITY;
+        fmin[i] = -INFINITY;
+        fracture[i] = INFINITY;
+
+        penalty[i] = 0.0f;
+        lambda[i] = 0.0f;
+    }
+}
+
+
+Force::~Force()
+{
+    // Remove from solver linked list
+    Force** p = &solver->forces;
+    while (*p != this)
+        p = &(*p)->next;
+    *p = next;
+
+    // Remove from body linked lists
+    if (bodyA)
+    {
+        p = &bodyA->forces;
+        while (*p != this)
+            p = (*p)->bodyA == bodyA ? &(*p)->nextA : &(*p)->nextB;
+        *p = nextA;
+    }
+
+    if (bodyB)
+    {
+        p = &bodyB->forces;
+        while (*p != this)
+            p = (*p)->bodyA == bodyB ? &(*p)->nextA : &(*p)->nextB;
+        *p = nextB;
+    }
+}
+
+void Force::disable()
+{
+    // Disable this force by clearing the relavent fields
+    for (int i = 0; i < MAX_ROWS; i++)
+    {
+        stiffness[i] = 0;
+        penalty[i] = 0;
+        lambda[i] = 0;
+    }
+}
+
+
+
+================================================
+FILE: source/joint.cpp
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#include "solver.h"
+
+Joint::Joint(Solver* solver, Rigid* bodyA, Rigid* bodyB, float2 rA, float2 rB, float3 stiffness, float fracture)
+    : Force(solver, bodyA, bodyB), rA(rA), rB(rB)
+{
+    this->stiffness[0] = stiffness.x;
+    this->stiffness[1] = stiffness.y;
+    this->stiffness[2] = stiffness.z;
+    this->fmax[2] = fracture;
+    this->fmin[2] = -fracture;
+    this->fracture[2] = fracture;
+    this->restAngle = (bodyA ? bodyA->position.z : 0.0f) - bodyB->position.z;
+    this->torqueArm = lengthSq((bodyA ? bodyA->size : float2{ 0, 0 }) + bodyB->size);
+}
+
+bool Joint::initialize()
+{
+    // Store constraint function at beginnning of timestep C(x-)
+    // Note: if bodyA is null, it is assumed that the joint connects a body to the world space position rA
+    C0.xy() = (bodyA ? transform(bodyA->position, rA) : rA) - transform(bodyB->position, rB);
+    C0.z = ((bodyA ? bodyA->position.z : 0) - bodyB->position.z - restAngle) * torqueArm;
+    return stiffness[0] != 0 || stiffness[1] != 0 || stiffness[2] != 0;
+}
+
+void Joint::computeConstraint(float alpha)
+{
+    // Compute constraint function at current state C(x)
+    float3 Cn;
+    Cn.xy() = (bodyA ? transform(bodyA->position, rA) : rA) - transform(bodyB->position, rB);
+    Cn.z = ((bodyA ? bodyA->position.z : 0) - bodyB->position.z - restAngle) * torqueArm;
+
+    for (int i = 0; i < rows(); i++)
+    {
+        // Store stabilized constraint function, if a hard constraint (Eq. 18)
+        if (isinf(stiffness[i]))
+            C[i] = Cn[i] - C0[i] * alpha;
+        else
+            C[i] = Cn[i];
+    }
+}
+
+void Joint::computeDerivatives(Rigid* body)
+{
+    // Compute the first and second derivatives for the desired body
+    if (body == bodyA)
+    {
+        float2 r = rotate(bodyA->position.z, rA);
+        J[0] = { 1.0f, 0.0f, -r.y };
+        J[1] = { 0.0f, 1.0f, r.x };
+        J[2] = { 0.0f, 0.0f, torqueArm };
+        H[0] = { 0, 0, 0, 0, 0, 0, 0, 0, -r.x };
+        H[1] = { 0, 0, 0, 0, 0, 0, 0, 0, -r.y };
+        H[2] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    }
+    else
+    {
+        float2 r = rotate(bodyB->position.z, rB);
+        J[0] = { -1.0f, 0.0f, r.y };
+        J[1] = { 0.0f, -1.0f, -r.x };
+        J[2] = { 0.0f, 0.0f, -torqueArm };
+        H[0] = { 0, 0, 0, 0, 0, 0, 0, 0, r.x };
+        H[1] = { 0, 0, 0, 0, 0, 0, 0, 0, r.y };
+        H[2] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    }
+}
+
+void Joint::draw() const
+{
+    float2 v0 = bodyA ? transform(bodyA->position, rA) : rA;
+    float2 v1 = transform(bodyB->position, rB);
+
+    glColor3f(0.75f, 0.0f, 0.0f);
+    glBegin(GL_LINES);
+    glVertex2f(v0.x, v0.y);
+    glVertex2f(v1.x, v1.y);
+    glEnd();
+}
+
+
+
+================================================
+FILE: source/main.cpp
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#include <stdio.h>
+#include <stdint.h>
+#include <assert.h>
+#include <map>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+#ifdef TARGET_OS_MAC
+#include <OpenGL/GL.h>
+#else
+#include <GL/gl.h>
+#endif
+
+#include <SDL2/SDL.h>
+#include <imgui.h>
+#include <backends/imgui_impl_sdl2.h>
+#include <backends/imgui_impl_opengl3.h>
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
+#include "maths.h"
+#include "solver.h"
+#include "scenes.h"
+
+#define WinWidth 1280
+#define WinHeight 720
+
+bool Running = 1;
+bool FullScreen = 0;
+SDL_Window *Window;
+SDL_GLContext Context;
+int WindowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+
+Solver* solver = new Solver();
+Joint* drag = 0;
+float camZoom = 25.0f;
+float2 camPos = { 0, 5 };
+int currScene = 4;
+float2 boxSize = { 1, 1 };
+float2 boxVelocity = { 0, 0 };
+float boxFriction = 0.5f;
+float boxDensity = 1.0f;
+bool paused = false;
+
+bool touchOnly = false;
+std::map<SDL_FingerID, float2> activeFingers;
+float2 prevGestureCenter;
+bool hasPrevGestureCenter = false;
+
+void ui()
+{
+    // Draw the ImGui UI
+    ImGui::Begin("Controls");
+    if (touchOnly)
+    {
+        ImGui::Text("Move Cam: Two-Finger Drag");
+        ImGui::Text("Zoom Cam: Pinch");
+        ImGui::Text("Make Box: Double Tap");
+        ImGui::Text("Drag Box: Tap and Hold");
+    }
+    else
+    {
+        ImGui::Text("Move Cam: W,A,S,D / Middle Mouse");
+        ImGui::Text("Zoom Cam: Q,E / Mouse Wheel");
+        ImGui::Text("Make Box: Right Mouse Button");
+        ImGui::Text("Drag Box: Left Mouse Button");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    int scene = currScene;
+    if (ImGui::BeginCombo("Scene", sceneNames[scene]))
+    {
+        for (int i = 0; i < sceneCount; i++)
+        {
+            bool selected = scene == i;
+            if (ImGui::Selectable(sceneNames[i], selected) && i != currScene)
+            {
+                currScene = i;
+                scenes[currScene](solver);
+            }
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+
+    if (ImGui::Button(" Reset "))
+        scenes[currScene](solver);
+    ImGui::SameLine();
+    if (ImGui::Button("Default"))
+        solver->defaultParams();
+
+    ImGui::Checkbox("Pause", &paused);
+    if (paused)
+    {
+        ImGui::SameLine();
+        if (ImGui::Button("Step"))
+            solver->step();
+    }
+
+    ImGui::Spacing();
+    ImGui::SliderFloat("Box Friction", &boxFriction, 0.0f, 2.0f);
+    ImGui::SliderFloat2("Box Size", &boxSize.x, 0.1f, 10.0f);
+    ImGui::SliderFloat2("Box Velocity", &boxVelocity.x, -20.0f, 20.0f);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::SliderFloat("Gravity", &solver->gravity, -20.0f, 20.0f);
+    ImGui::SliderFloat("Dt", &solver->dt, 0.001f, 0.1f);
+    ImGui::SliderInt("Iterations", &solver->iterations, 1, 50);
+
+    if (!solver->postStabilize)
+        ImGui::SliderFloat("Alpha", &solver->alpha, 0.0f, 1.0f);
+    ImGui::SliderFloat("Beta", &solver->beta, 0.0f, 1000000.0f, "%.f", ImGuiSliderFlags_Logarithmic);
+    ImGui::SliderFloat("Gamma", &solver->gamma, 0.0f, 1.0f);
+
+    ImGui::Checkbox("Post Stabilize", &solver->postStabilize);
+
+    ImGui::End();
+}
+
+void input()
+{
+    auto& io = ImGui::GetIO();
+
+    // Convert mouse position to world coordinates
+    float2 mousePos = camPos + (float2{ io.MousePos.x, io.DisplaySize.y - io.MousePos.y } -
+        float2{ io.DisplaySize.x, io.DisplaySize.y } *0.5f) / camZoom;
+
+    // Camera keyboard controls
+    if (ImGui::IsKeyDown(ImGuiKey_D))
+        camPos.x += 10 / camZoom;
+    if (ImGui::IsKeyDown(ImGuiKey_A))
+        camPos.x -= 10 / camZoom;
+    if (ImGui::IsKeyDown(ImGuiKey_W))
+        camPos.y += 10 / camZoom;
+    if (ImGui::IsKeyDown(ImGuiKey_S))
+        camPos.y -= 10 / camZoom;
+    if (ImGui::IsKeyDown(ImGuiKey_E))
+        camZoom *= 1.025f;
+    if (ImGui::IsKeyDown(ImGuiKey_Q))
+        camZoom /= 1.025f;
+
+    // Camera mouse controls
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Middle))
+        camPos -= float2{ io.MouseDelta.x, -io.MouseDelta.y } / camZoom;
+    camZoom *= powf(1.1f, io.MouseWheel);
+
+    // Drag box
+    if (io.MouseDown[ImGuiMouseButton_Left])
+    {
+        if (!drag)
+        {
+            float2 local;
+            Rigid* b;
+            if ((b = solver->pick(mousePos, local)))
+                drag = new Joint(solver, 0, b, mousePos, local, float3{ 1000.0f, 1000.0f, 0.0f });
+        }
+        else
+            drag->rA = mousePos;
+    }
+    else if (drag)
+    {
+        delete drag;
+        drag = 0;
+    }
+
+    // Create box
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
+        (touchOnly && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)))
+    {
+        new Rigid(solver, boxSize, boxDensity, boxFriction, float3{ mousePos.x, mousePos.y, 0.0f },
+            float3{ boxVelocity.x, boxVelocity.y, 0.0f });
+    }
+}
+
+void mainLoop()
+{
+    // Event loop
+    SDL_Event event;
+    while (SDL_PollEvent(&event))
+    {
+        ImGui_ImplSDL2_ProcessEvent(&event);
+
+        if (event.type == SDL_KEYDOWN)
+        {
+            if (event.key.keysym.sym == SDLK_RETURN && (event.key.keysym.mod & KMOD_ALT))
+            {
+                FullScreen = !FullScreen;
+                Uint32 fullscreenFlag = FullScreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
+                SDL_SetWindowFullscreen(Window, fullscreenFlag);
+            }
+            
+            if (event.key.keysym.sym == SDLK_ESCAPE)
+            {
+                #ifndef __EMSCRIPTEN__
+                Running = 0;
+                #endif
+            }
+        }
+        else if (event.type == SDL_QUIT)
+        { 
+            #ifndef __EMSCRIPTEN__
+            Running = 0;
+            #endif
+        }
+        else if (event.type == SDL_FINGERDOWN)
+        {
+            int w, h;
+            SDL_GetWindowSize(Window, &w, &h);
+            SDL_FingerID id = event.tfinger.fingerId;
+            float2 pos = { event.tfinger.x * w, event.tfinger.y * h };
+            activeFingers[id] = pos;
+            if (activeFingers.size() != 2)
+            {
+                hasPrevGestureCenter = false;
+            }
+        }
+        else if (event.type == SDL_FINGERUP)
+        {
+            activeFingers.erase(event.tfinger.fingerId);
+            hasPrevGestureCenter = false;
+        }
+        else if (event.type == SDL_MULTIGESTURE)
+        {
+            if (event.mgesture.numFingers == 2)
+            {
+                int w, h;
+                SDL_GetWindowSize(Window, &w, &h);
+                float2 center = { event.mgesture.x * w, event.mgesture.y * h };
+
+                // Handle panning
+                if (hasPrevGestureCenter)
+                {
+                    float2 delta = center - prevGestureCenter;
+                    camPos -= float2{ delta.x, -delta.y } / camZoom;
+                }
+                prevGestureCenter = center;
+                hasPrevGestureCenter = true;
+
+                // Handle zooming (pinch)
+                float dDist = event.mgesture.dDist;
+                if (dDist != 0.0f)
+                {
+                    float zoomFactor = 1.0f + dDist * 2.0f;
+                    if (zoomFactor > 0.01f)
+                    {
+                        float2 screenOffset = float2 { center.x, (float)h - center.y } - float2{ (float)w, (float)h } * 0.5f;
+                        float oldZoom = camZoom;
+                        camZoom *= zoomFactor;
+                        float2 oldScreenOffset = screenOffset / oldZoom;
+                        float2 newScreenOffset = screenOffset / camZoom;
+                        camPos += oldScreenOffset - newScreenOffset;
+                    }
+                }
+            }
+        }
+    }
+
+    // Setup GL
+    int w, h;
+    SDL_GetWindowSize(Window, &w, &h);
+
+    glEnable(GL_LINE_SMOOTH);
+    glLineWidth(2.0f);
+    glPointSize(3.0f);
+    glViewport(0, 0, w, h);
+    glClearColor(1, 1, 1, 1); 
+    glClear(GL_COLOR_BUFFER_BIT);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(camPos.x - w / 2 / camZoom, camPos.x + w / 2 / camZoom, camPos.y - h / 2 / camZoom, camPos.y + h / 2 / camZoom, -1, 1);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // ImGUI setup
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGui::NewFrame();
+
+    input();
+    ui();
+
+    // Step solver and draw it
+    if (!paused)
+        solver->step();
+    solver->draw();
+
+    // ImGUI rendering
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    SDL_GL_SwapWindow(Window);
+}
+
+int main(int argc, char* argv[])
+{
+    // Initialize SDL
+    if (SDL_Init(SDL_INIT_VIDEO) < 0)
+    {
+        printf("Failed to initialize SDL: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    #ifdef EMSCRIPTEN
+    touchOnly = (bool)emscripten_run_script_int("window.matchMedia('(pointer:coarse)').matches ? 1 : 0");
+    #endif
+
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);    // Enable multisampling
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
+
+    #ifdef EMSCRIPTEN
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);  // OpenGL ES 3.0 (WebGL2)
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);  // No forward-compatible flag
+    #endif
+
+    // Create the SDL window
+    Window = SDL_CreateWindow("AVBD 2D", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WinWidth, WinHeight, WindowFlags);
+    if (!Window)
+    {
+        printf("Failed to create window: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    // Create the OpenGL context
+    Context = SDL_GL_CreateContext(Window);
+    if (!Context)
+    {
+        printf("Failed to create OpenGL context: %s\n", SDL_GetError());
+        SDL_DestroyWindow(Window);
+        SDL_Quit();
+        return -1;
+    }
+    
+    SDL_GL_MakeCurrent(Window, Context);
+    SDL_GL_SetSwapInterval(1); // Enable vsync
+    
+    // Setup Dear ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
+    (void)io;
+
+    // Scale UI higher for mobile devices
+    #ifdef EMSCRIPTEN
+    const float uiScale = touchOnly ? 2.0f : 1.0f;
+    #else
+    const float uiScale = 1.0f;
+    #endif
+
+    ImFontConfig font_config;
+    font_config.SizePixels = 13.0f * uiScale;
+    io.Fonts->AddFontDefault(&font_config);
+
+    // Setup Dear ImGui style
+    ImGui::StyleColorsDark();
+
+    // Scale all style elements
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.ScaleAllSizes(uiScale);
+
+    // Setup Platform/Renderer bindings
+    ImGui_ImplSDL2_InitForOpenGL(Window, Context);
+    #ifdef __EMSCRIPTEN__
+    ImGui_ImplOpenGL3_Init("#version 300 es");  // WebAssembly
+    #else
+    ImGui_ImplOpenGL3_Init("#version 150");     // Desktop OpenGL
+    #endif
+
+    // Load scene
+    scenes[currScene](solver);
+
+    #ifdef __EMSCRIPTEN__
+    // Use Emscripten's main loop for the web
+    emscripten_set_main_loop(mainLoop, 0, 1);
+    #else
+    // For native builds, use a while loop
+    while (Running)
+    {
+        mainLoop();
+    }
+    #endif
+
+    // Cleanup
+    SDL_GL_DeleteContext(Context);
+    SDL_DestroyWindow(Window);
+    SDL_Quit();
+
+    return 0;
+}
+
+
+
+================================================
+FILE: source/manifold.cpp
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#include "solver.h"
+
+Manifold::Manifold(Solver* solver, Rigid* bodyA, Rigid* bodyB)
+    : Force(solver, bodyA, bodyB), numContacts(0)
+{
+    fmax[0] = fmax[2] = 0.0f;
+    fmin[0] = fmin[2] = -INFINITY;
+}
+
+bool Manifold::initialize()
+{
+    // Compute friction
+    friction = sqrtf(bodyA->friction * bodyB->friction);
+
+    // Store previous contact state
+    Contact oldContacts[2] = { contacts[0], contacts[1] };
+    float oldPenalty[4] = { penalty[0], penalty[1], penalty[2], penalty[3] };
+    float oldLambda[4] = { lambda[0], lambda[1], lambda[2], lambda[3] };
+    bool oldStick[2] = { contacts[0].stick, contacts[1].stick };
+    int oldNumContacts = numContacts;
+
+    // Compute new contacts
+    numContacts = collide(bodyA, bodyB, contacts);
+
+    // Merge old contact data with new contacts
+    for (int i = 0; i < numContacts; i++)
+    {
+        penalty[i * 2 + 0] = penalty[i * 2 + 1] = 0.0f;
+        lambda[i * 2 + 0] = lambda[i * 2 + 1] = 0.0f;
+
+        for (int j = 0; j < oldNumContacts; j++)
+        {
+            if (contacts[i].feature.value == oldContacts[j].feature.value)
+            {
+                penalty[i * 2 + 0] = oldPenalty[j * 2 + 0];
+                penalty[i * 2 + 1] = oldPenalty[j * 2 + 1];
+                lambda[i * 2 + 0] = oldLambda[j * 2 + 0];
+                lambda[i * 2 + 1] = oldLambda[j * 2 + 1];
+                contacts[i].stick = oldStick[j];
+
+                // If static friction in last frame, use the old contact points
+                if (oldStick[j])
+                {
+                    contacts[i].rA = oldContacts[j].rA;
+                    contacts[i].rB = oldContacts[j].rB;
+                }
+            }
+        }
+    }
+
+    for (int i = 0; i < numContacts; i++)
+    {
+        // Compute the contact basis (Eq. 15)
+        float2 normal = contacts[i].normal;
+        float2 tangent = { normal.y, -normal.x };
+        float2x2 basis = {
+            normal.x, normal.y,
+            tangent.x, tangent.y
+        };
+
+        float2 rAW = rotate(bodyA->position.z, contacts[i].rA);
+        float2 rBW = rotate(bodyB->position.z, contacts[i].rB);
+
+        // Precompute the constraint and derivatives at C(x-), since we use a truncated Taylor series for contacts (Sec 4).
+        // Note that we discard the second order term, since it is insignificant for contacts
+        contacts[i].JAn = { basis[0][0], basis[0][1], cross(rAW, normal) };
+        contacts[i].JBn = { -basis[0][0], -basis[0][1], -cross(rBW, normal) };
+        contacts[i].JAt = { basis[1][0], basis[1][1], cross(rAW, tangent) };
+        contacts[i].JBt = { -basis[1][0], -basis[1][1], -cross(rBW, tangent) };
+
+        contacts[i].C0 = basis * (bodyA->position.xy() + rAW - bodyB->position.xy() - rBW) + float2{ COLLISION_MARGIN, 0 };
+    }
+
+    return numContacts > 0;
+}
+
+void Manifold::computeConstraint(float alpha)
+{
+    for (int i = 0; i < numContacts; i++)
+    {
+        // Compute the Taylor series approximation of the constraint function C(x) (Sec 4)
+        float3 dpA = bodyA->position - bodyA->initial;
+        float3 dpB = bodyB->position - bodyB->initial;
+        
+        C[i * 2 + 0] = contacts[i].C0.x * (1 - alpha) + dot(contacts[i].JAn, dpA) + dot(contacts[i].JBn, dpB);
+        C[i * 2 + 1] = contacts[i].C0.y * (1 - alpha) + dot(contacts[i].JAt, dpA) + dot(contacts[i].JBt, dpB);
+
+        // Update the friction bounds using the latest lambda values
+        float frictionBound = abs(lambda[i * 2 + 0]) * friction;
+        fmax[i * 2 + 1] = frictionBound;
+        fmin[i * 2 + 1] = -frictionBound;
+
+        // Check if the contact is sticking, so that on the next frame we can use the old contact points for better static friction handling
+        contacts[i].stick = abs(lambda[i * 2 + 1]) < frictionBound && abs(contacts[i].C0.y) < STICK_THRESH;
+    }
+}
+
+void Manifold::computeDerivatives(Rigid* body)
+{
+    // Just store precomputed derivatives in J for the desired body
+    for (int i = 0; i < numContacts; i++)
+    {
+        if (body == bodyA)
+        {
+            J[i * 2 + 0] = contacts[i].JAn;
+            J[i * 2 + 1] = contacts[i].JAt;
+        }
+        else
+        {
+            J[i * 2 + 0] = contacts[i].JBn;
+            J[i * 2 + 1] = contacts[i].JBt;
+        }
+    }
+}
+
+void Manifold::draw() const
+{
+    if (!SHOW_CONTACTS)
+        return;
+
+    for (int i = 0; i < numContacts; i++)
+    {
+        float2 v0 = transform(bodyA->position, contacts[i].rA);
+        float2 v1 = transform(bodyB->position, contacts[i].rB);
+
+        glColor3f(0.75f, 0.0f, 0.0f);
+        glBegin(GL_POINTS);
+        glVertex2f(v0.x, v0.y);
+        glVertex2f(v1.x, v1.y);
+        glEnd();
+    }
+}
+
+
+
+================================================
+FILE: source/maths.h
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#pragma once
+
+#include <cmath>
+
+using namespace std;
+
+// Math types
+
+struct float2
+{
+    float x, y;
+
+    float& operator[](int i) { return ((float*)this)[i]; }
+    const float& operator[](int i) const { return ((float*)this)[i]; }
+};
+
+struct float3
+{
+    float x, y, z;
+
+    float2& xy() { return *(float2*)this; }
+    const float2& xy() const { return *(float2*)this; }
+
+    float& operator[](int i) { return ((float*)this)[i]; }
+    const float& operator[](int i) const { return ((float*)this)[i]; }
+};
+
+struct float2x2
+{
+    float2 row[2];
+
+    float2& operator[](int i) { return row[i]; }
+    const float2& operator[](int i) const { return row[i]; }
+
+    float2 col(int i) const { return float2 { row[0][i], row[1][i] }; }
+};
+
+struct float3x3
+{
+    float3 row[3];
+
+    float3& operator[](int i) { return row[i]; }
+    const float3& operator[](int i) const { return row[i]; }
+
+    float3 col(int i) const { return float3{ row[0][i], row[1][i], row[2][i] }; }
+};
+
+// float2 operators
+
+float dot(float2 a, float2 b);
+
+inline float2 operator+=(float2& a, float2 b)
+{
+    a.x += b.x;
+    a.y += b.y;
+    return a;
+}
+
+inline float2 operator-=(float2& a, float2 b)
+{
+    a.x -= b.x;
+    a.y -= b.y;
+    return a;
+}
+
+inline float2 operator-(float2 v)
+{
+    return { -v.x, -v.y };
+}
+
+inline float2 operator+(float2 a, float2 b)
+{
+    return { a.x + b.x, a.y + b.y };
+}
+
+inline float2 operator-(float2 a, float2 b)
+{
+    return { a.x - b.x, a.y - b.y };
+}
+
+inline float2 operator*(float2 a, float b)
+{
+    return { a.x * b, a.y * b };
+}
+
+inline float2 operator/(float2 a, float b)
+{
+    return { a.x / b, a.y / b };
+}
+
+inline float2 operator*(float2x2 a, float2 b)
+{
+    return { dot(a[0], b), dot(a[1], b) };
+}
+
+// float3 operators
+
+float dot(float3 a, float3 b);
+
+inline float3& operator+=(float3& a, float3 b)
+{
+    a.x += b.x;
+    a.y += b.y;
+    a.z += b.z;
+    return a;
+}
+
+inline float3& operator-=(float3& a, float3 b)
+{
+    a.x -= b.x;
+    a.y -= b.y;
+    a.z -= b.z;
+    return a;
+}
+
+inline float3 operator-(float3 v)
+{
+    return { -v.x, -v.y, -v.z };
+}
+
+inline float3 operator+(float3 a, float3 b)
+{
+    return { a.x + b.x, a.y + b.y, a.z + b.z };
+}
+
+inline float3 operator-(float3 a, float3 b)
+{
+    return { a.x - b.x, a.y - b.y, a.z - b.z };
+}
+
+inline float3 operator*(float3 a, float b)
+{
+    return { a.x * b, a.y * b, a.z * b };
+}
+
+inline float3 operator/(float3 a, float b)
+{
+    return { a.x / b, a.y / b, a.z / b };
+}
+
+inline float3 operator*(float3x3 a, float3 b)
+{
+    return { dot(a[0], b), dot(a[1], b), dot(a[2], b) };
+}
+
+// float2x2 operators
+
+inline float2x2 operator+(float2x2 a, float2x2 b)
+{
+    return { a[0] + b[0], a[1] + b[1] };
+}
+
+inline float2x2 operator-(float2x2 a, float2x2 b)
+{
+    return { a[0] - b[0], a[1] - b[1] };
+}
+
+inline float2x2 operator*(float2x2 a, float b)
+{
+    return { a[0] * b, a[1] * b };
+}
+
+inline float2x2 operator/(float2x2 a, float b)
+{
+    return { a[0] / b, a[1] / b };
+}
+
+inline float2x2 operator*(float2x2 a, float2x2 b)
+{
+    return { 
+        float2 { dot(a.row[0], b.col(0)), dot(a.row[0], b.col(1)) },
+        float2 { dot(a.row[1], b.col(0)), dot(a.row[1], b.col(1)) } 
+    };
+}
+
+// float3x3 operators
+
+inline float3x3& operator+=(float3x3& a, float3x3 b)
+{
+    a[0] += b[0];
+    a[1] += b[1];
+    a[2] += b[2];
+    return a;
+}
+
+inline float3x3 operator+(float3x3 a, float3x3 b)
+{
+    return { a[0] + b[0], a[1] + b[1], a[2] + b[2] };
+}
+
+inline float3x3 operator-(float3x3 a, float3x3 b)
+{
+    return { a[0] - b[0], a[1] - b[1], a[2] - b[2] };
+}
+
+inline float3x3 operator*(float3x3 a, float b)
+{
+    return { a[0] * b, a[1] * b, a[2] * b };
+}
+
+inline float3x3 operator/(float3x3 a, float b)
+{
+    return { a[0] / b, a[1] / b, a[2] / b };
+}
+
+// Math functions
+
+inline float sign(float x)
+{
+    return x < 0 ? -1.0f : x > 0 ? 1.0f : 0.0f;
+}
+
+inline float min(float a, float b)
+{
+    return a < b ? a : b;
+}
+
+inline float max(float a, float b)
+{
+    return a > b ? a : b;
+}
+
+inline float clamp(float x, float a, float b)
+{
+    return max(a, min(b, x));
+}
+
+inline float dot(float2 a, float2 b)
+{
+    return a.x * b.x + a.y * b.y;
+}
+
+inline float dot(float3 a, float3 b)
+{
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+inline float lengthSq(float2 v)
+{
+    return dot(v, v);
+}
+
+inline float length(float2 v)
+{
+    return sqrtf(dot(v, v));
+}
+
+inline float lengthSq(float3 v)
+{
+    return dot(v, v);
+}
+
+inline float length(float3 v)
+{
+    return sqrtf(dot(v, v));
+}
+
+inline float cross(float2 a, float2 b)
+{
+    return a.x * b.y - a.y * b.x;
+}
+
+inline float2x2 outer(float2 a, float2 b)
+{
+    return { b * a.x, b * a.y };
+}
+
+inline float3x3 outer(float3 a, float3 b)
+{
+    return { b * a.x, b * a.y, b * a.z };
+}
+
+inline float2 abs(float2 v)
+{
+    return { fabsf(v.x), fabsf(v.y) };
+}
+
+inline float2x2 abs(float2x2 a)
+{
+    return { abs(a[0]), abs(a[1]) };
+}
+
+inline float2x2 transpose(float2x2 a)
+{
+    return { float2 { a[0][0], a[1][0] }, float2 {a[0][1], a[1][1] }};
+}
+
+inline float2x2 rotation(float angle)
+{
+    float c = cos(angle);
+    float s = sin(angle);
+    return { c, -s, s, c };
+}
+
+inline float3x3 diagonal(float m00, float m11, float m22)
+{
+    return float3x3 {
+        m00, 0, 0, 
+        0, m11, 0,
+        0, 0, m22
+    };
+}
+
+inline float2 transform(float3 q, float2 v)
+{
+    return rotation(q.z) * v + q.xy();
+}
+
+inline float2 rotate(float angle, float2 v)
+{
+    return rotation(angle) * v;
+}
+
+inline float3 solve(float3x3 a, float3 b)
+{
+    // Compute LDL^T decomposition
+    float D1 = a[0][0];
+    float L21 = a[1][0] / a[0][0];
+    float L31 = a[2][0] / a[0][0];
+    float D2 = a[1][1] - L21 * L21 * D1;
+    float L32 = (a[2][1] - L21 * L31 * D1) / D2;
+    float D3 = a[2][2] - (L31 * L31 * D1 + L32 * L32 * D2);
+
+    // Forward substitution: Solve Ly = b
+    float y1 = b.x;
+    float y2 = b.y - L21 * y1;
+    float y3 = b.z - L31 * y1 - L32 * y2;
+
+    // Diagonal solve: Solve Dz = y
+    float z1 = y1 / D1;
+    float z2 = y2 / D2;
+    float z3 = y3 / D3;
+
+    // Backward substitution: Solve L^T x = z
+    float3 x;
+    x[2] = z3;
+    x[1] = z2 - L32 * x[2];
+    x[0] = z1 - L21 * x[1] - L31 * x[2];
+
+    return x;
+}
+
+
+
+================================================
+FILE: source/motor.cpp
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#include "solver.h"
+
+Motor::Motor(Solver* solver, Rigid* bodyA, Rigid* bodyB, float speed, float maxTorque)
+    : Force(solver, bodyA, bodyB), speed(speed)
+{
+    fmax[0] = maxTorque;
+    fmin[0] = -maxTorque;
+}
+
+void Motor::computeConstraint(float alpha)
+{
+    // Compute delta angular position between the two bodies
+    float dAngleA = (bodyA ? (bodyA->position.z - bodyA->initial.z) : 0.0f);
+    float dAngleB = bodyB->position.z - bodyB->initial.z;
+    float deltaAngle = dAngleA - dAngleB;
+
+    // Constraint tries to reach desired angular speed
+    C[0] = deltaAngle - speed * solver->dt;
+}
+
+void Motor::computeDerivatives(Rigid* body)
+{
+    // Compute the first and second derivatives for the desired body
+    if (body == bodyA)
+    {
+        J[0] = { 0.0f, 0.0f, 1.0f };
+        H[0] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    }
+    else
+    {
+        J[0] = { 0.0f, 0.0f, -1.0f };
+        H[0] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    }
+}
+
+
+
+================================================
+FILE: source/rigid.cpp
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#include "solver.h"
+
+Rigid::Rigid(Solver* solver, float2 size, float density, float friction, float3 position, float3 velocity)
+    : solver(solver), forces(0), next(0), position(position), velocity(velocity), prevVelocity(velocity), size(size), friction(friction)
+{
+    // Add to linked list
+    next = solver->bodies;
+    solver->bodies = this;
+
+    // Compute mass properties and bounding radius
+    mass = size.x * size.y * density;
+    moment = mass * dot(size, size) / 12.0f;
+    radius = length(size * 0.5f);
+}
+
+Rigid::~Rigid()
+{
+    // Remove from linked list
+    Rigid** p = &solver->bodies;
+    while (*p != this)
+        p = &(*p)->next;
+    *p = next;
+}
+
+bool Rigid::constrainedTo(Rigid* other) const
+{
+    // Check if this body is constrained to the other body
+    for (Force* f = forces; f != 0; f = f->next)
+        if ((f->bodyA == this && f->bodyB == other) || (f->bodyA == other && f->bodyB == this))
+            return true;
+    return false;
+}
+
+void Rigid::draw()
+{
+    float2x2 R = rotation(position.z);
+    float2 v0 = R * float2{ -size.x * 0.5f, -size.y * 0.5f } + position.xy();
+    float2 v1 = R * float2{ size.x * 0.5f, -size.y * 0.5f } + position.xy();
+    float2 v2 = R * float2{ size.x * 0.5f, size.y * 0.5f } + position.xy();
+    float2 v3 = R * float2{ -size.x * 0.5f, size.y * 0.5f } + position.xy();
+
+    glColor3f(0.6f, 0.6f, 0.6f);
+    glBegin(GL_QUADS);
+    glVertex2f(v0.x, v0.y);
+    glVertex2f(v1.x, v1.y);
+    glVertex2f(v2.x, v2.y);
+    glVertex2f(v3.x, v3.y);
+    glEnd();
+
+    glColor3f(0, 0, 0);
+    glBegin(GL_LINE_LOOP);
+    glVertex2f(v0.x, v0.y);
+    glVertex2f(v1.x, v1.y);
+    glVertex2f(v2.x, v2.y);
+    glVertex2f(v3.x, v3.y);
+    glEnd();
+}
+
+
+
+================================================
+FILE: source/scenes.h
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#pragma once
+
+#include "maths.h"
+#include "solver.h"
+
+static void sceneEmpty(Solver* solver)
+{
+    solver->clear();
+}
+
+static void sceneGround(Solver* solver)
+{
+    solver->clear();
+    new Rigid(solver, { 100, 1 }, 0.0f, 0.5f, { 0, 0, 0 }, { 0, 0, 0 });
+}
+
+static void sceneDynamicFriction(Solver* solver)
+{
+    solver->clear();
+    new Rigid(solver, { 100, 1 }, 0.0f, 0.5f, { 0, 0, 0 }, { 0, 0, 0 });
+    for (int x = 0; x <= 10; x++)
+        new Rigid(solver, { 1, 0.5f }, 1.0f, 5.0f - (x / 10.0f * 5.0f), { -30.0f + x * 2.0f, 0.75f, 0 }, { 10.0f, 0, 0 });
+}
+
+static void sceneStaticFriction(Solver* solver)
+{
+    solver->clear();
+    new Rigid(solver, { 100, 1 }, 0.0f, 1.0f, { 0, 0, 3.14159f / 6.0f });
+    for (int y = 0; y <= 10; y++)
+        new Rigid(solver, { 5, 0.5f }, 1.0f, 1.0f, { 0.0f, y * 1.0f + 1.0f, 3.14159f / 6.0f });
+}
+
+static void scenePyramid(Solver* solver)
+{
+    const int SIZE = 20;
+    solver->clear();
+    new Rigid(solver, { 100, 0.5f }, 0.0f, 0.5f, { 0.0f, -2.0f, 0.0f });
+    for (int y = 0; y < SIZE; y++)
+        for (int x = 0; x < SIZE - y; x++)
+            new Rigid(solver, { 1, 0.5f }, 1.0f, 0.5f, { x * 1.1f + y * 0.5f - SIZE / 2.0f, y * 0.85f, 0.0f });
+}
+
+static void sceneRope(Solver* solver)
+{
+    solver->clear();
+    Rigid* prev = 0;
+    for (int i = 0; i < 20; i++)
+    {
+        Rigid* curr = new Rigid(solver, { 1, 0.5f }, i == 0 ? 0.0f : 1.0f, 0.5f, { (float)i, 10.0f, 0.0f });
+        if (prev)
+            new Joint(solver, prev, curr, { 0.5f, 0 }, { -0.5f, 0 }, { INFINITY, INFINITY, 0.0f });
+        prev = curr;
+    }
+}
+
+static void sceneHeavyRope(Solver* solver)
+{
+    const int N = 20;
+    const float SIZE = 30;
+    solver->clear();
+    Rigid* prev = 0;
+    for (int i = 0; i < N; i++)
+    {
+        Rigid* curr = new Rigid(solver, i == N - 1 ? float2 { SIZE, SIZE } : float2 { 1, 0.5f }, i == 0 ? 0.0f : 1.0f, 0.5f, { (float)i + (i == N - 1 ? SIZE / 2 : 0), 10.0f, 0.0f});
+        if (prev)
+            new Joint(solver, prev, curr, { 0.5f, 0 }, i == N - 1 ? float2{ -SIZE / 2, 0 } : float2 { -0.5f, 0 }, { INFINITY, INFINITY, 0.0f });
+        prev = curr;
+    }
+}
+
+static void sceneHangingRope(Solver* solver)
+{
+    const int N = 50;
+    const float SIZE = 10;
+    solver->clear();
+    Rigid* prev = 0;
+    for (int i = 0; i < N; i++)
+    {
+        Rigid* curr = new Rigid(solver, i == N - 1 ? float2{ SIZE, SIZE } : float2{ 0.5f, 1.0f }, i == 0 ? 0.0f : 1.0f, 0.5f, { 0.0f, 10.0f - ((float)i + (i == N - 1 ? SIZE / 2 : 0)), 0.0f });
+        if (prev)
+            new Joint(solver, prev, curr, { 0, -0.5f }, i == N - 1 ? float2{ 0, SIZE / 2} : float2{ 0, 0.5f }, { INFINITY, INFINITY, 0.0f });
+        prev = curr;
+    }
+}
+
+static void sceneSpring(Solver* solver)
+{
+    solver->clear();
+    Rigid* anchor = new Rigid(solver, { 1, 1 }, 0.0f, 0.5f, { 0.0f, 0.0f, 0.0f });
+    Rigid* block = new Rigid(solver, { 4, 4 }, 1.0f, 0.5f, { 0.0f, -8.0f, 0.0f });
+    new Spring(solver, anchor, block, { 0, 0 }, { 0, 0 }, 100.0f, 4.0f);
+}
+
+static void sceneSpringsRatio(Solver* solver)
+{
+    const int N = 8;
+    solver->clear();
+    Rigid* prev = 0;
+    for (int i = 0; i < N; i++)
+    {
+        Rigid* curr = new Rigid(solver, { 1, 0.5f }, i == 0 || i == N - 1 ? 0.0f : 1.0f, 0.5f, { (float)i * 4, 10.0f, 0.0f });
+        if (prev)
+            new Spring(solver, prev, curr, { 0.5f, 0 }, { -0.5f, 0 }, i % 2 == 0 ? 1000.0f : 1000000.0f, 0.1f);
+        prev = curr;
+    }
+}
+
+static void sceneStack(Solver* solver)
+{
+    solver->clear();
+    new Rigid(solver, { 100, 1 }, 0.0f, 0.5f, { 0, 0, 0 });
+    for (int i = 0; i < 20; i++)
+        new Rigid(solver, { 1, 1 }, 1.0f, 0.5f, { 0, i * 2.0f + 1.0f, 0 });
+}
+
+static void sceneStackRatio(Solver* solver)
+{
+    solver->clear();
+    new Rigid(solver, { 100, 1 }, 0.0f, 0.5f, { 0, 0, 0 });
+    for (int i = 0, y = 1, s = 1; i < 6; i++)
+    {
+        new Rigid(solver, { (float)s, (float)s }, 1.0f, 0.5f, { 0, (float)y, 0 });
+        y += s * 3 / 2;
+        s *= 2;
+    }
+}
+
+static void sceneRod(Solver* solver)
+{
+    solver->clear();
+    Rigid* prev = 0;
+    for (int i = 0; i < 20; i++)
+    {
+        Rigid* curr = new Rigid(solver, { 1, 0.5f }, i == 0 ? 0.0f : 1.0f, 0.5f, { (float)i, 10.0f, 0.0f });
+        if (prev)
+            new Joint(solver, prev, curr, { 0.5f, 0 }, { -0.5f, 0 }, { INFINITY, INFINITY, INFINITY });
+        prev = curr;
+    }
+}
+
+static void sceneSoftBody(Solver* solver)
+{
+    solver->clear();
+    new Rigid(solver, { 100, 0.5f }, 0.0f, 0.5f, { 0.0f, 0.0f });
+
+    const float Klin = 1000.0f;
+    const float Kang = 100.0f;
+    const int W = 15, H = 5;
+    const int N = 2;
+    for (int i = 0; i < N; i++)
+    {
+        Rigid* grid[W][H];
+        for (int x = 0; x < W; x++)
+            for (int y = 0; y < H; y++)
+                grid[x][y] = new Rigid(solver, { 1, 1 }, 1.0f, 0.5f, { (float)x, (float)y + H * i * 2.0f + 5.0f, 0.0f });
+
+        for (int x = 1; x < W; x++)
+            for (int y = 0; y < H; y++)
+                new Joint(solver, grid[x - 1][y], grid[x][y], { 0.5f, 0 }, { -0.5f, 0 }, { Klin, Klin, Kang });
+
+        for (int x = 0; x < W; x++)
+            for (int y = 1; y < H; y++)
+                new Joint(solver, grid[x][y - 1], grid[x][y], { 0, 0.5f }, { 0, -0.5f }, { Klin, Klin, Kang });
+
+        for (int x = 1; x < W; x++)
+        {
+            for (int y = 1; y < H; y++)
+            {
+                new IgnoreCollision(solver, grid[x - 1][y - 1], grid[x][y]);
+                new IgnoreCollision(solver, grid[x][y - 1], grid[x - 1][y]);
+            }
+        }
+    }
+}
+
+static void sceneJointGrid(Solver* solver)
+{
+    solver->clear();
+
+    const int W = 25, H = 25;
+    const int N = 2;
+
+    Rigid* grid[W][H];
+    for (int x = 0; x < W; x++)
+        for (int y = 0; y < H; y++)
+            grid[x][y] = new Rigid(solver, { 1, 1 }, y == H - 1 && (x == 0 || x == W - 1) ? 0.0f : 1.0f, 0.5f, { (float)x, (float)y, 0.0f });
+
+    for (int x = 1; x < W; x++)
+        for (int y = 0; y < H; y++)
+            new Joint(solver, grid[x - 1][y], grid[x][y], { 0.5f, 0 }, { -0.5f, 0 });
+
+    for (int x = 0; x < W; x++)
+        for (int y = 1; y < H; y++)
+            new Joint(solver, grid[x][y - 1], grid[x][y], { 0, 0.5f }, { 0, -0.5f });
+
+    for (int x = 1; x < W; x++)
+    {
+        for (int y = 1; y < H; y++)
+        {
+            new IgnoreCollision(solver, grid[x - 1][y - 1], grid[x][y]);
+            new IgnoreCollision(solver, grid[x][y - 1], grid[x - 1][y]);
+        }
+    }
+}
+
+static void sceneNet(Solver* solver)
+{
+    const int N = 40;
+
+    solver->clear();
+    new Rigid(solver, { 100, 0.5f }, 0.0f, 0.5f, { 0.0f, 0.0f });
+
+    Rigid* prev = 0;
+    for (int i = 0; i < N; i++)
+    {
+        Rigid* curr = new Rigid(solver, { 1, 0.5f }, i == 0 || i == N - 1 ? 0.0f : 1.0f, 0.5f, { (float)i - N / 2.0f, 10.0f, 0.0f });
+        if (prev)
+            new Joint(solver, prev, curr, { 0.5f, 0 }, { -0.5f, 0 }, { INFINITY, INFINITY, 0.0f });
+        prev = curr;
+    }
+
+    for (int x = 0; x < N / 4; x++)
+        for (int y = 0; y < N / 8; y++)
+            new Rigid(solver, { 1, 1 }, 1.0f, 0.5f, { (float)x - N / 8.0f, (float)y + 15.0f, 0.0f });
+}
+
+static void sceneMotor(Solver* solver)
+{
+    solver->clear();
+    new Rigid(solver, { 100, 0.5f }, 0.0f, 0.5f, { 0.0f, -10.0f });
+
+    Rigid* a0 = new Rigid(solver, { 5, 0.5f }, 1.0f, 0.5f, { 0.0f, 0.0f, 0.0f });
+    new Joint(solver, 0, a0, { 0, 0 }, { 0, 0 }, { INFINITY, INFINITY, 0.0f });
+    new Motor(solver, 0, a0, 20.0f, 50.0f);
+}
+
+static void sceneFracture(Solver* solver)
+{
+    const int N = 10;
+    const int M = 15;
+
+    solver->clear();
+    new Rigid(solver, { 100, 0.5f }, 0.0f, 0.5f, { 0.0f, 0.0f });
+
+    Rigid* prev = 0;
+    for (int i = 0; i <= N; i++)
+    {
+        Rigid* curr = new Rigid(solver, { 1, 0.5f }, 1.0f, 0.5f, { (float)i - N / 2.0f, 6.0f, 0.0f });
+        if (prev)
+            new Joint(solver, prev, curr, { 0.5f, 0 }, { -0.5f, 0 }, { INFINITY, INFINITY, INFINITY }, 500.0f);
+        prev = curr;
+    }
+
+    new Rigid(solver, { 1, 5 }, 1.0f, 0.5f, { -N / 2.0f, 2.5f, 0 });
+    new Rigid(solver, { 1, 5 }, 1.0f, 0.5f, { N / 2.0f, 2.5f, 0 });
+
+    for (int i = 0; i < M; i++)
+        new Rigid(solver, { 2, 1 }, 1.0f, 0.5f, { 0, i * 2.0f + 8.0f, 0 });
+}
+
+static void sceneCards(Solver* solver)
+{
+    solver->clear();
+    new Rigid(solver, { 80.0f, 4.0f }, 0.0f, 0.7f, { 0.0f, -2.0f, 0.0f });
+
+    float cardHeight = 0.2f * 2.0f;
+    float cardThickness = 0.001f * 2.0f;
+
+    float angle0 = 25.0f * 3.14159f / 180.0f;
+    float angle1 = -25.0f * 3.14159f / 180.0f;
+    float angle2 = 0.5f * 3.14159f;
+
+    int Nb = 5;
+    float z0 = 0.0f;
+    float y = cardHeight * 0.5f - 0.02f;
+    while (Nb)
+    {
+        float z = z0;
+        for (int i = 0; i < Nb; i++)
+        {
+            if (i != Nb - 1)
+            {
+                new Rigid(solver, { cardThickness, cardHeight }, 1.0f, 0.7f, { z + 0.25f, y + cardHeight * 0.5f - 0.02f, angle2 });
+            }
+
+            new Rigid(solver, { cardThickness, cardHeight }, 1.0f, 0.7f, { z, y, angle1 });
+
+            z += 0.175f;
+
+            new Rigid(solver, { cardThickness, cardHeight }, 1.0f, 0.7f, { z, y, angle0 });
+
+            z += 0.175f;
+        }
+        y += cardHeight - 0.04f;
+        z0 += 0.175f;
+        Nb--;
+    }
+}
+
+
+static void (*scenes[])(Solver*) =
+{
+    sceneEmpty,
+    sceneGround,
+    sceneDynamicFriction,
+    sceneStaticFriction,
+    scenePyramid,
+    sceneCards,
+    sceneRope,
+    sceneHeavyRope,
+    sceneHangingRope,
+    sceneSpring,
+    sceneSpringsRatio,
+    sceneStack,
+    sceneStackRatio,
+    sceneRod,
+    sceneSoftBody,
+    sceneJointGrid,
+    sceneNet,
+    sceneMotor,
+    sceneFracture
+};
+
+static const char* sceneNames[] = {
+    "Empty",
+    "Ground",
+    "Dynamic Friction",
+    "Static Friction",
+    "Pyramid",
+    "Cards",
+    "Rope",
+    "Heavy Rope",
+    "Hanging Rope",
+    "Spring",
+    "Spring Ratio",
+    "Stack",
+    "Stack Ratio",
+    "Rod",
+    "Soft Body",
+    "Joint Grid",
+    "Net",
+    "Motor",
+    "Fracture"
+};
+
+static const int sceneCount = 19;
+
+
+
+================================================
+FILE: source/shell.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>AVBD Demo 2D</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { width: 100vw; height: 100vh; display: block; }
+    </style>
+    <script>
+
+        var Module = {
+            preRun: [],
+            postRun: [],
+            print: (function() {
+                return function(text) { console.log(text); };
+            })(),
+            canvas: document.createElement("canvas"), // Create the canvas element early
+            onRuntimeInitialized: function() {
+                console.log("WASM Ready!");
+				
+							document.getElementById("canvas").addEventListener("contextmenu", function(event) {
+				event.preventDefault();
+			});
+            }
+        };
+
+        document.addEventListener("DOMContentLoaded", function() {
+		
+            let body = document.body;
+            body.appendChild(Module.canvas);  // Ensure canvas is in the DOM
+            Module.canvas.id = "canvas";     // Set the correct ID
+            console.log("Canvas added to DOM, initializing WebGL...");
+
+            let gl = Module.canvas.getContext("webgl2");
+            if (!gl) {
+                console.error("Failed to get WebGL2 context. Falling back to WebGL1...");
+                gl = Module.canvas.getContext("webgl");
+                if (!gl) {
+                    console.error("WebGL is not supported!");
+                }
+            } else {
+                console.log("WebGL2 initialized successfully!");
+            }
+        });
+    </script>
+</head>
+<body>
+    {{{ SCRIPT }}}
+</body>
+</html>
+
+
+
+================================================
+FILE: source/solver.cpp
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#include "solver.h"
+
+Solver::Solver()
+    : bodies(0), forces(0)
+{
+    defaultParams();
+}
+
+Solver::~Solver()
+{
+    clear();
+}
+
+Rigid* Solver::pick(float2 at, float2& local)
+{
+    // Find which body is at the given point
+    for (Rigid* body = bodies; body != 0; body = body->next)
+    {
+        float2x2 Rt = rotation(-body->position.z);
+        local = Rt * (at - body->position.xy());
+        if (local.x >= -body->size.x * 0.5f && local.x <= body->size.x * 0.5f &&
+            local.y >= -body->size.y * 0.5f && local.y <= body->size.y * 0.5f)
+            return body;
+    }
+    return 0;
+}
+
+void Solver::clear()
+{
+    while (forces)
+        delete forces;
+
+    while (bodies)
+        delete bodies;
+}
+
+void Solver::defaultParams()
+{
+    dt = 1.0f / 60.0f;
+    gravity = -10.0f;
+    iterations = 10;
+
+    // Note: in the paper, beta is suggested to be [1, 1000]. Technically, the best choice will
+    // depend on the length, mass, and constraint function scales (ie units) of your simulation,
+    // along with your strategy for incrementing the penalty parameters.
+    // If the value is not in the right range, you may see slower convergance for complex scenes.
+    beta = 100000.0f;
+
+    // Alpha controls how much stabilization is applied. Higher values give slower and smoother
+    // error correction, and lower values are more responsive and energetic. Tune this depending
+    // on your desired constraint error response.
+    alpha = 0.99f;
+
+    // Gamma controls how much the penalty and lambda values are decayed each step during warmstarting.
+    // This should always be < 1 so that the penalty values can decrease (unless you use a different
+    // penalty parameter strategy which does not require decay).
+    gamma = 0.99f;
+
+    // Post stabilization applies an extra iteration to fix positional error.
+    // This removes the need for the alpha parameter, which can make tuning a little easier.
+    postStabilize = true;
+}
+
+void Solver::step()
+{
+    // Perform broadphase collision detection
+    // This is a naive O(n^2) approach, but it is sufficient for small numbers of bodies in this sample.
+    for (Rigid* bodyA = bodies; bodyA != 0; bodyA = bodyA->next)
+    {
+        for (Rigid* bodyB = bodyA->next; bodyB != 0; bodyB = bodyB->next)
+        {
+            float2 dp = bodyA->position.xy() - bodyB->position.xy();
+            float r = bodyA->radius + bodyB->radius;
+            if (dot(dp, dp) <= r * r && !bodyA->constrainedTo(bodyB))
+                new Manifold(this, bodyA, bodyB);
+        }
+    }
+
+    // Initialize and warmstart forces
+    for (Force* force = forces; force != 0;)
+    {
+        // Initialization can including caching anything that is constant over the step
+        if (!force->initialize())
+        {
+            // Force has returned false meaning it is inactive, so remove it from the solver
+            Force* next = force->next;
+            delete force;
+            force = next;
+        }
+        else
+        {
+            for (int i = 0; i < force->rows(); i++)
+            {
+                if (postStabilize)
+                {
+                    // With post stabilization, we can reuse the full lambda from the previous step,
+                    // and only need to reduce the penalty parameters
+                    force->penalty[i] = clamp(force->penalty[i] * gamma, PENALTY_MIN, PENALTY_MAX);
+                }
+                else
+                {
+                    // Warmstart the dual variables and penalty parameters (Eq. 19)
+                    // Penalty is safely clamped to a minimum and maximum value
+                    force->lambda[i] = force->lambda[i] * alpha * gamma;
+                    force->penalty[i] = clamp(force->penalty[i] * gamma, PENALTY_MIN, PENALTY_MAX);
+                }
+
+                // If it's not a hard constraint, we don't let the penalty exceed the material stiffness
+                force->penalty[i] = min(force->penalty[i], force->stiffness[i]);
+            }
+
+            force = force->next;
+        }
+    }
+
+    // Initialize and warmstart bodies (ie primal variables)
+    for (Rigid* body = bodies; body != 0; body = body->next)
+    {
+        // Don't let bodies rotate too fast
+        body->velocity.z = clamp(body->velocity.z, -50.0f, 50.0f);
+
+        // Compute inertial position (Eq 2)
+        body->inertial = body->position + body->velocity * dt;
+        if (body->mass > 0)
+            body->inertial += float3{ 0, gravity, 0 } * (dt * dt);
+
+        // Adaptive warmstart (See original VBD paper)
+        float3 accel = (body->velocity - body->prevVelocity) / dt;
+        float accelExt = accel.y * sign(gravity);
+        float accelWeight = clamp(accelExt / abs(gravity), 0.0f, 1.0f);
+        if (!isfinite(accelWeight)) accelWeight = 0.0f;
+
+        // Save initial position (x-) and compute warmstarted position (See original VBD paper)
+        body->initial = body->position;
+        body->position = body->position + body->velocity * dt + float3{ 0, gravity, 0 } * (accelWeight * dt * dt);
+    }
+
+    // Main solver loop
+    // If using post stabilization, we'll use one extra iteration for the stabilization
+    int totalIterations = iterations + (postStabilize ? 1 : 0);
+
+    for (int it = 0; it < totalIterations; it++)
+    {
+        // If using post stabilization, either remove all or none of the pre-existing constraint error
+        float currentAlpha = alpha;
+        if (postStabilize)
+            currentAlpha = it < iterations ? 1.0f : 0.0f;
+
+        // Primal update
+        for (Rigid* body = bodies; body != 0; body = body->next)
+        {
+            // Skip static / kinematic bodies
+            if (body->mass <= 0)
+                continue;
+
+            // Initialize left and right hand sides of the linear system (Eqs. 5, 6)
+            float3x3 M = diagonal(body->mass, body->mass, body->moment);
+            float3x3 lhs = M / (dt * dt);
+            float3 rhs = M / (dt * dt) * (body->position - body->inertial);
+
+            // Iterate over all forces acting on the body
+            for (Force* force = body->forces; force != 0; force = (force->bodyA == body) ? force->nextA : force->nextB)
+            {
+                // Compute constraint and its derivatives
+                force->computeConstraint(currentAlpha);
+                force->computeDerivatives(body);
+
+                for (int i = 0; i < force->rows(); i++)
+                {
+                    // Use lambda as 0 if it's not a hard constraint
+                    float lambda = isinf(force->stiffness[i]) ? force->lambda[i] : 0.0f;
+
+                    // Compute the clamped force magnitude (Sec 3.2)
+                    float f = clamp(force->penalty[i] * force->C[i] + lambda, force->fmin[i], force->fmax[i]);
+
+                    // Compute the diagonally lumped geometric stiffness term (Sec 3.5)
+                    float3x3 G = diagonal(length(force->H[i].col(0)), length(force->H[i].col(1)), length(force->H[i].col(2))) * abs(f);
+
+                    // Accumulate force (Eq. 13) and hessian (Eq. 17)
+                    rhs += force->J[i] * f;
+                    lhs += outer(force->J[i], force->J[i] * force->penalty[i]) + G;
+                }
+            }
+
+            // Solve the SPD linear system using LDL and apply the update (Eq. 4)
+            body->position -= solve(lhs, rhs);
+        }
+
+        // Dual update, only for non stabilized iterations in the case of post stabilization
+        // If doing more than one post stabilization iteration, we can still do a dual update,
+        // but make sure not to persist the penalty or lambda updates done during the stabilization iterations for the next frame.
+        if (it < iterations)
+        {
+            for (Force* force = forces; force != 0; force = force->next)
+            {
+                // Compute constraint
+                force->computeConstraint(currentAlpha);
+
+                for (int i = 0; i < force->rows(); i++)
+                {
+                    // Use lambda as 0 if it's not a hard constraint
+                    float lambda = isinf(force->stiffness[i]) ? force->lambda[i] : 0.0f;
+
+                    // Update lambda (Eq 11)
+                    force->lambda[i] = clamp(force->penalty[i] * force->C[i] + lambda, force->fmin[i], force->fmax[i]);
+
+                    // Disable the force if it has exceeded its fracture threshold
+                    if (fabsf(force->lambda[i]) >= force->fracture[i])
+                        force->disable();
+
+                    // Update the penalty parameter and clamp to material stiffness if we are within the force bounds (Eq. 16)
+                    if (force->lambda[i] > force->fmin[i] && force->lambda[i] < force->fmax[i])
+                        force->penalty[i] = min(force->penalty[i] + beta * abs(force->C[i]), min(PENALTY_MAX, force->stiffness[i]));
+                }
+            }
+        }
+
+        // If we are are the final iteration before post stabilization, compute velocities (BDF1)
+        if (it == iterations - 1)
+        {
+            for (Rigid* body = bodies; body != 0; body = body->next)
+            {
+                body->prevVelocity = body->velocity;
+                if (body->mass > 0)
+                    body->velocity = (body->position - body->initial) / dt;
+            }
+        }
+    }
+}
+
+void Solver::draw()
+{
+    for (Rigid* body = bodies; body != 0; body = body->next)
+        body->draw();
+    for (Force* force = forces; force != 0; force = force->next)
+        force->draw();
+}
+
+
+
+================================================
+FILE: source/solver.h
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#pragma once
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+#ifdef TARGET_OS_MAC
+#include <OpenGL/GL.h>
+#else
+#include <GL/gl.h>
+#endif
+
+#include "maths.h"
+
+#define MAX_ROWS 4                    // Most number of rows an individual constraint can have
+#define PENALTY_MIN 1.0f              // Minimum penalty parameter
+#define PENALTY_MAX 1000000000.0f     // Maximum penalty parameter
+#define COLLISION_MARGIN 0.0005f      // Margin for collision detection to avoid flickering contacts
+#define STICK_THRESH 0.01f            // Position threshold for sticking contacts (ie static friction)
+#define SHOW_CONTACTS true            // Whether to show contacts in the debug draw
+
+struct Rigid;
+struct Force;
+struct Manifold;
+struct Solver;
+
+// Holds all the state for a single rigid body that is needed by AVBD
+struct Rigid
+{
+    Solver* solver;
+    Force* forces;
+    Rigid* next;
+    float3 position;
+    float3 initial;
+    float3 inertial;
+    float3 velocity;
+    float3 prevVelocity;
+    float2 size;
+    float mass;
+    float moment;
+    float friction;
+    float radius;
+
+    Rigid(Solver* solver, float2 size, float density, float friction, float3 position, float3 velocity = float3{ 0, 0, 0 });
+    ~Rigid();
+
+    bool constrainedTo(Rigid* other) const;
+    void draw();
+};
+
+// Holds all user defined and derived constraint parameters, and provides a common interface for all forces.
+struct Force
+{
+    Solver* solver;
+    Rigid* bodyA;
+    Rigid* bodyB;
+    Force* nextA;
+    Force* nextB;
+    Force* next;
+
+    float3 J[MAX_ROWS];
+    float3x3 H[MAX_ROWS];
+    float C[MAX_ROWS];
+    float fmin[MAX_ROWS];
+    float fmax[MAX_ROWS];
+    float stiffness[MAX_ROWS];
+    float fracture[MAX_ROWS];
+    float penalty[MAX_ROWS];
+    float lambda[MAX_ROWS];
+
+    Force(Solver* solver, Rigid* bodyA, Rigid* bodyB);
+    virtual ~Force();
+
+    void disable();
+
+    virtual int rows() const = 0;
+    virtual bool initialize() = 0;
+    virtual void computeConstraint(float alpha) = 0;
+    virtual void computeDerivatives(Rigid* body) = 0;
+    virtual void draw() const {}
+};
+
+// Revolute joint + angle constraint between two rigid bodies, with optional fracture
+struct Joint : Force
+{
+    float2 rA, rB;
+    float3 C0;
+    float torqueArm;
+    float restAngle;
+
+    Joint(Solver* solver, Rigid* bodyA, Rigid* bodyB, float2 rA, float2 rB, float3 stiffness = float3{ INFINITY, INFINITY, INFINITY },
+        float fracture = INFINITY);
+
+    int rows() const override { return 3; }
+
+    bool initialize() override;
+    void computeConstraint(float alpha) override;
+    void computeDerivatives(Rigid* body) override;
+    void draw() const override;
+};
+
+// Standard spring force
+struct Spring : Force
+{
+    float2 rA, rB;
+    float rest;
+
+    Spring(Solver* solver, Rigid* bodyA, Rigid* bodyB, float2 rA, float2 rB, float stiffness, float rest = -1);
+
+    int rows() const override { return 1; }
+
+    bool initialize() override { return true; }
+    void computeConstraint(float alpha) override;
+    void computeDerivatives(Rigid* body) override;
+    void draw() const override;
+};
+
+// Force which has no physical effect, but is used to ignore collisions between two bodies
+struct IgnoreCollision : Force
+{
+    IgnoreCollision(Solver* solver, Rigid* bodyA, Rigid* bodyB)
+        : Force(solver, bodyA, bodyB) {}
+
+    int rows() const override { return 0; }
+
+    bool initialize() override { return true; }
+    void computeConstraint(float alpha) override {}
+    void computeDerivatives(Rigid* body) override {}
+    void draw() const override {}
+};
+
+// Motor force which applies a torque to two rigid bodies to achieve a desired angular speed
+struct Motor : Force
+{
+    float speed;
+
+    Motor(Solver* solver, Rigid* bodyA, Rigid* bodyB, float speed, float maxTorque);
+
+    int rows() const override { return 1; }
+
+    bool initialize() override { return true; }
+    void computeConstraint(float alpha) override;
+    void computeDerivatives(Rigid* body) override;
+    void draw() const override {}
+};
+
+// Collision manifold between two rigid bodies, which contains up to two frictional contact points
+struct Manifold : Force
+{
+    // Used to track contact features between frames
+    union FeaturePair
+    {
+        struct Edges
+        {
+            char inEdge1;
+            char outEdge1;
+            char inEdge2;
+            char outEdge2;
+        } e;
+        int value;
+    };
+
+    // Contact point information for a single contact
+    struct Contact
+    {
+        FeaturePair feature;
+        float2 rA;
+        float2 rB;
+        float2 normal;
+
+        float3 JAn, JBn, JAt, JBt;
+        float2 C0;
+        bool stick;
+    };
+
+    Contact contacts[2];
+    int numContacts;
+    float friction;
+
+    Manifold(Solver* solver, Rigid* bodyA, Rigid* bodyB);
+
+    int rows() const override { return numContacts * 2; }
+
+    bool initialize() override;
+    void computeConstraint(float alpha) override;
+    void computeDerivatives(Rigid* body) override;
+    void draw() const override;
+
+    static int collide(Rigid* bodyA, Rigid* bodyB, Contact* contacts);
+};
+
+// Core solver class which holds all the rigid bodies and forces, and has logic to step the simulation forward in time
+struct Solver
+{
+    float dt;           // Timestep
+    float gravity;      // Gravity
+    int iterations;     // Solver iterations
+
+    float alpha;        // Stabilization parameter
+    float beta;         // Penalty ramping parameter
+    float gamma;        // Warmstarting decay parameter
+
+    bool postStabilize; // Whether to apply post-stabilization to the system
+
+    Rigid* bodies;
+    Force* forces;
+
+    Solver();
+    ~Solver();
+
+    Rigid* pick(float2 at, float2& local);
+    void clear();
+    void defaultParams();
+    void step();
+    void draw();
+};
+
+
+
+================================================
+FILE: source/spring.cpp
+================================================
+/*
+* Copyright (c) 2025 Chris Giles
+*
+* Permission to use, copy, modify, distribute and sell this software
+* and its documentation for any purpose is hereby granted without fee,
+* provided that the above copyright notice appear in all copies.
+* Chris Giles makes no representations about the suitability
+* of this software for any purpose.
+* It is provided "as is" without express or implied warranty.
+*/
+
+#include "solver.h"
+
+Spring::Spring(Solver* solver, Rigid* bodyA, Rigid* bodyB, float2 rA, float2 rB, float stiffness, float rest)
+    : Force(solver, bodyA, bodyB), rA(rA), rB(rB), rest(rest)
+{
+    this->stiffness[0] = stiffness;
+    if (this->rest < 0)
+        this->rest = length(transform(bodyA->position, rA) - transform(bodyB->position, rB));
+}
+
+void Spring::computeConstraint(float alpha)
+{
+    // Compute constraint function at current state C(x)
+    C[0] = length(transform(bodyA->position, rA) - transform(bodyB->position, rB)) - rest;
+}
+
+void Spring::computeDerivatives(Rigid* body)
+{
+    // Compute the first and second derivatives for the desired body
+    float2x2 S = { 0, -1, 1, 0 };
+    float2x2 I = { 1, 0, 0, 1 };
+
+    float2 d = transform(bodyA->position, rA) - transform(bodyB->position, rB);
+    float dlen2 = dot(d, d);
+    if (dlen2 == 0)
+        return;
+
+    float dlen = sqrtf(dlen2);
+    float2 n = d / dlen;
+    float2x2 dxx = (I - outer(n, n)) / dlen;
+
+    if (body == bodyA)
+    {
+        float2 Sr = rotate(bodyA->position.z, S * rA);
+        float2 r = rotate(bodyA->position.z, rA);
+
+        float2 dxr = dxx * Sr;
+        float drr = -dot(n, r) - dot(n, r);
+
+        J[0].xy() = n;
+        J[0].z = dot(n, Sr);
+        H[0] = {
+            dxx.row[0].x, dxx.row[0].y, dxr.x,
+            dxx.row[1].x, dxx.row[1].y, dxr.y,
+            dxr.x,          dxr.y,        drr
+        };
+    }
+    else
+    {
+        float2 Sr = rotate(bodyB->position.z, S * rB);
+        float2 r = rotate(bodyB->position.z, rB);
+        float2 dxr = dxx * Sr;
+        float drr = dot(n, r) + dot(n, r);
+
+        J[0].xy() = -n;
+        J[0].z = dot(n, -Sr);
+        H[0] = {
+            dxx.row[0].x, dxx.row[0].y, dxr.x,
+            dxx.row[1].x, dxx.row[1].y, dxr.y,
+            dxr.x,          dxr.y,        drr
+        };
+    }
+}
+
+void Spring::draw() const
+{
+    float2 v0 = transform(bodyA->position, rA);
+    float2 v1 = transform(bodyB->position, rB);
+
+    glColor3f(0.75f, 0.0f, 0.0f);
+    glBegin(GL_LINES);
+    glVertex2f(v0.x, v0.y);
+    glVertex2f(v1.x, v1.y);
+    glEnd();
+}
+
+
