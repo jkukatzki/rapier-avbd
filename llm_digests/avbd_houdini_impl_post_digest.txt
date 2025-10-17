@@ -1,0 +1,46 @@
+Houdini's Vellum simulation framework works great with cloth, hair, softbodies, balloons, and other materials, but can it be improved?
+
+FX TD Hallam Roberts thinks so: the artist presented Augmented Vertex Block Descent, a version of VBD with even better physics.
+
+VBD is a block coordinate descent solution that works with local vertex position updates rather than the whole system at once. Roberts added some tools "stolen" from TinyVBD, Gaia, NVIDIA Warp, AVBD-2D, and Vellum itself to make physics simulations more robust.
+
+
+As Roberts explains, VBD is similar to Vellum, but they differ in constraints and collisions.
+
+As for his Augmented Vertex Block Descent, he describes it as "an extension to VBD mainly to improve stiffness. It changes stiffness adaptively to prevent stuff getting too loose. Stiffness is stored on the prims, so both the points (primal elements) and prims (dual elements) must be updated."
+
+The features include:
+
+From TinyVBD:
+
+Mass-spring constraints 
+Accelerated convergence method 
+Hessian direct inverse
+From Gaia:
+
+VBD integration (inertia, inertia and acceleration, adaptive)
+Neo-Hookean constraints
+General damping
+From NVIDIA Warp:
+
+Ground collisions
+Ground friction
+Ground damping
+From AVBD-2D:
+
+Spring constraints 
+Joint constraints 
+Dual constraint updates
+Breaking constraints
+Hessian LDLT decomposition
+SPD Hessian approximation
+From Vellum (XPBD):
+
+Vellum integration 
+Self and external collisions
+Stopped, permanent and animated pin support
+Custom forces support
+Graph coloring 
+The Otis solver soft tissue simulation tool, introduced in Houdini 21, uses Vertex Block Descent, so "in the spirit of this project (and not getting sued), I won't steal anything from it for now," the creator promises. Roberts noted that most of SideFX's code is identical to his.
+
+"Currently it's specialized for muscle and tissue, so it might be a while until it gets support for rigid bodies (packed prims). I'm planning to add support for this soon, so we'll see who wins!"
