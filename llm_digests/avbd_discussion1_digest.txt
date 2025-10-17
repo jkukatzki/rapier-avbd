@@ -1,0 +1,117 @@
+Post: (showcases a avbd 2D implementation)
+  This is an AVBD implementation faithful to the original paper by Chris Giles, Elie Diaz and Cem Yuskel (link in the description). The demo has only link constraints, the solver uses 10 iterations for both PBD and AVBD, both solvers run in comparable time.
+  If you're not familiar with simulating constraint physics,it's particularly challenging to get stiff enough materials such as fabric and ropes that don't stretch.
+  In the demo I show that AVBD without warmstarting is slightly stiffer than PBD and with warmstarting it's quite a bit stiffer.
+  Unfortunately, the algorithm has quite a few magical parameters that I had to carefully tweak, and they have pretty nasty failure modes such as unstable explosions and weird rigid-like behaviour.
+
+thread1:
+  Reply:
+    I took a look at the GitHub for reference, but there are some key parts different from the AVBD paper. The most significant is missing graph coloring. I found graph coloring is super important for VBD to work reliably, as VBD's energy definitions assume all vertices are pinned in place. If they aren't (like when run in sequential order), this assumption no longer holds and it explodes much more than usual
+  Reply:
+    hmm.. i didnt assume that graph coloring is needed even for a single threaded version. are you sure that it has stability implications?
+  Reply:
+    what's the form of the energy term that they use? i might try colored updates, see if it has any effect
+    For GAIA (the main repo) they used Neo-Hookean energy and for NVIDIA Warp (a version they made for cloth) they used StVK. Only TinyVBD and AVBD use mass-spring energy, for me this improved quite a lot from graph coloring. I'm not sure about the other 2 but I'm hoping to test them soon
+  Reply:
+   My other comment was about coloring, it seems to help prevent too much energy/motion buildup, especially between long chains of points. If these are run sequentially they are very likely to explode. The other thing that helped a ton was the symmetric positive definite approximation from the paper, which I saw in your repo. This combined with coloring should be pretty stable
+  Reply:
+  ​ it's strange to me how coloring can affect stability. in pbd, constraint order only affects convergence speed, at least i never saw an analysis that suggests any specific PGS order leads to instabilities. why should it be any different for a vertex-based solver?
+
+thread2:
+  Reply:
+    Hey this looks great! Yours appears to be the first published third party implementation! The paper is really interesting and in many ways feels like a silver bullet to  physics, especially on GPU.
+    How do you like it compared to pbd? PBD was really intuitive to understand, even for a non physics programmer. 
+    AVBD seems less intuitive at the first glance. Was it easy to get up and running? 
+    Papers are often a bit too optimistic and don't cover real world issues. Did you notice any potential issues that might prevent this from becoming more wide spread? The paper and its results feels almost too good to be true 😅
+  Reply:
+    It can perform better than PBD. I doesn't sound like much, but in reality this is a huge achievement. Imo it's kind of embarrassing how trivial PBD is vs how long it took us to come up with something that performs even slightly better.
+    It's definitely much more complex than PBD in terms of its maths and implementation complexity,
+    and it requires more background experience to implement since it relies on hessian-based newton optimization iterations and understanding of implicit integration. 
+    This in fact can perform better than PBD, but its parametrization is very annoyingly scene-dependent and I doubt that existing engines will implement this exact version because of stability problems that arise from those fiddly and sensitive parameters:
+    even though the paper tries to convince you that a wide range of those parameters works fine, in my experience it's not the case. I hope we (the game physics community) will improve on this method to make it easier to parametrize and then it'll be golden.
+
+
+thread3:
+  Reply:
+    I've also implemented AVDB (purely particle-based so 3x3 hessians, solved for positional deltas using the analytic method) and found it to be a lot more finicky than PBD. It's easy to get particles behaving in a weird rigid-like way when constraint stiffness is high, and may become a jitter fest with low values of the alpha parameter, which I found needs to be tweaked for each specific case. It's also more cumbersome to implement, as you need to store a list of force elements/constraints affecting each particle and also per constraint data (a lagrange multiplier) like in PBD so information is kind of split in two places.
+    The main strengths I found it to have over PBD are much better convergence in the presence of high mass ratios, and better performance compared to Gauss-Seidel style PBD *if you use multithreading*. It however performs slightly worse than PBD on a single thread, as solving each particle requires building and inverting a 3x3/6x6 matrix. Imho the pros don't outweigh the cons in its current state.
+  Reply:
+    note that the paper uses an incorrect hessian: they've dropped the quadratic part from the hessian, but then they added a quadratic part from lambdas. Imo it's only valid to either remove both of them or keep both of them. In my experiments it works better if I use the full hessian with the second derivatives part.
+  Reply:
+    what do you think about potential GPU parallelization? I don't know much about (X)PDB but the original VBD paper seems to suggest that its potential for parallelization is higher in VBD due to fewer vertex "colors". Dont know if anyone has released a GPU implementation yet however.
+
+
+
+Reply
+
+
+@Alexander_Sannikov
+3 months ago
+ @_shogun  apparently planar graphs need at most 4 vertex colors (called Four Color Theorem) and edges in theory require an indefinite amount of colors. But I never implemented vertex coloring, so I'm not sure how realistic that would be to implement efficiently, and also even 4 colors sounds kind of wasteful.
+
+
+
+Reply
+
+
+@pierrepelletier825
+3 months ago
+ @Alexander_Sannikov  For curiosity's sake, are you talking about "regular" PBD or XPBD ? Do you have any opinion between the 2 of them ?
+
+
+
+Reply
+
+
+@VirtualMethod
+2 months ago (edited)
+​ @_shogun  Yes, it parallelizes better than XPBD because it only needs to color the primal graph (node adjacency) instead of the dual (edges between nodes). This means fewer colors in the graph, and more nodes with the same color.
+
+However,  in some cases the impact of this is limited, for instance planar graphs (cloth) tend to require very few colors either way. And in some cases it doesn't have any impact at all, for instance if you're simulating chains of constraints (eg. ropes) the minimal amount of colors in a linear graph is 2 for both dual and primal, and it's trivial to colorize it: odd nodes get one color, even nodes get the second color. Also doesn't matter in situations where each vertex is its own constraint (position-based fluids, soft shape matching) or when using a Jacobi-style solver, since you don't need graph coloring at all. 
+
+The situations where (A)VBD yields most benefit are rigidbody and volume softbody simulation. There's lots of contacts and distance/spring in these situations that make a Gauss-Seidel style solver very desirable over Jacobi variants (averaged Jacobi, mass splitting) due to its faster convergence, but it requires graph coloring so VBD alleviates its cost.
+
+In practice, if you take a particle-centric approach to (X)PBD instead of a constraint-centric one you can get both VBD-like parallelism and PBD simplicity: instead of iterating over all constraints and calculating their contribution to each body, go over each body calculating the displacement due to all constraints affecting it.
+
+1
+
+
+Reply
+
+
+@VirtualMethod
+2 months ago (edited)
+ @pierrepelletier825  They're 100% equivalent in terms of graph coloring, parallelism and overall performance. The only difference XPBD makes is that compliant materials (that is, things that are not infinitely stiff) get consistent treatment at different timesteps/iteration counts and you can get constraint forces as feedback. Imho it doesn't make much sense using vanilla PBD nowadays, since XPBD is literally just an extra term in the constraint formulation: if you've got PBD up and running, you're a few seconds away from implementing XPBD.
+
+1
+
+
+
+
+--------------
+
+threadx:
+  Reply:
+    The AVBD with the warmstarting looks way more natural even when it's just hanging there static, like the cloth is more prone to holding its shape.  That's one thing I was blown away by in the researcher's demonstration, blocks found a stable static configuration so quickly without the jitter & jank we're used to in real-time physics engines.
+    Really excited to see if someone can turn this into a library for godot.
+    If I were interested in trying to make my own implementation, do you know a good place to start?  Could I just look up the paper and start looking up the terms I don't know, or is there a starting point you'd recommend?
+  Reply:
+    Implement position-based physics first, then start learning terms you don't know from AVBD.
+
+threadx:
+  Reply:
+    I had the same problems with instability when making this in Houdini. I think it's an issue with using mass-spring energy. The original paper mainly uses Neo-Hookean energy, but TinyVBD and AVBD use mass-spring energy.
+    They removed mass-spring energy from the main repo probably because it's so unstable
+  Reply:
+    Mass spring is terrible. The neo hookean energies are much better in my experience
+
+threadx:
+  Almost all methods work better with the addition of a warm start, and the warm start inside avbd also makes it work far better than pbd.
+
+threadx:
+  It's designed to be GPU-friendly and it's relatively straightforward to implement in a compute shader. The only difficulty that I see is that it uses a vertex-based coloring scheme (as a primal method)) and I think this part is less efficient than edge-based coloring of dual methods like PBD and SI.
+threadx:
+  Reply:
+    Hello dear friend, I am looking into implementing AVBD myself, do you have a link to your source code somewhere? Also, what kind of constraints would you like to extend this to? I am curious into what constraint types it would be OK to start implementing into
+  Reply:
+    You can extend it to any of the classic constraints: contacts with friction, hinge, revolute, ball-socket, etc. Since I implemented it for 3-dof particles (rather than 6-dof rigid bodies), implementing link/distance constraints is the most natural and basic choice for testing. If I were implementing 6-dof rigid body physics, I'd probably test on a ball-socket joint instead.
