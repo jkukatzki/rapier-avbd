@@ -1,0 +1,2772 @@
+Directory structure:
+└── mysterypancake-houdini-vbd/
+    ├── README.md
+    ├── hips/
+    │   ├── sop_MysteryPancake.vbd_constraints.1.0.hdalc
+    │   ├── sop_MysteryPancake.vbd_constraints.1.3.hdalc
+    │   ├── sop_MysteryPancake.vbd_constraints.1.4.hdalc
+    │   ├── sop_MysteryPancake.vbd_constraints.1.5.hdalc
+    │   ├── sop_MysteryPancake.vbd_solver.1.0.hdalc
+    │   ├── sop_MysteryPancake.vbd_solver.1.1.hdalc
+    │   ├── sop_MysteryPancake.vbd_solver.1.2.hdalc
+    │   ├── sop_MysteryPancake.vbd_solver.1.3.hdalc
+    │   ├── sop_MysteryPancake.vbd_solver.1.4.hdalc
+    │   ├── sop_MysteryPancake.vbd_solver.1.5.hdalc
+    │   ├── trailer_demos_v1.4.hiplc
+    │   ├── vertex_block_descent_v1.1.hiplc
+    │   ├── vertex_block_descent_v1.2.hiplc
+    │   ├── vertex_block_descent_v1.3.hiplc
+    │   ├── vertex_block_descent_v1.4.hiplc
+    │   ├── vertex_block_descent_v1.5.hiplc
+    │   └── vertex_block_descent_v1.hiplc
+    ├── ocl/
+    │   ├── forwardStep.cl
+    │   ├── forwardStep_vellum.cl
+    │   ├── forwardStepDual.cl
+    │   ├── resetOmega.cl
+    │   ├── solveConstraints.cl
+    │   ├── updateConstraintPoints.cl
+    │   ├── updatePins.cl
+    │   ├── updateVelocity.cl
+    │   └── updateVelocity_vellum.cl
+    └── vex/
+        ├── addRigidConstraints.c
+        ├── checkRecoloring.c
+        ├── createDistanceConstraints.c
+        ├── detectRemovedPts.c
+        ├── forwardStep.c
+        ├── groupRigids.c
+        ├── hasOtis.c
+        ├── initPointAttribs.c
+        ├── initPrimAttribs.c
+        ├── mapIds.c
+        ├── renameConstraints.c
+        ├── setPointPrims.c
+        ├── setPtsTypeHash.c
+        ├── solveConstraints.c
+        ├── storeColoredTopo.c
+        ├── transferEdgeGroups.c
+        └── updateVelocity.c
+
+================================================
+FILE: README.md
+================================================
+# Houdini Augmented Vertex Block Descent
+WIP of Vertex Block Descent (VBD) in Houdini. It runs natively without plugins, as god intended.
+
+I ported it to OpenCL based on all official references ([TinyVBD](https://github.com/AnkaChan/TinyVBD), [Gaia](https://github.com/AnkaChan/Gaia), [NVIDIA Warp](https://github.com/NVIDIA/warp/blob/main/warp/sim/integrator_vbd.py), [AVBD-2D](https://github.com/savant117/avbd-demo2d)).
+
+Now supports stuff from Augmented Vertex Block Descent (AVBD) too! Note this currently affects AVBD constraints only.
+
+As well as the OpenCL version, there's an old VEX version to show how it works. Both are included in the HIP files.
+
+Thanks to Anka He Chen and Chris Giles for making these open source with permissive licenses!
+
+| [Download the HIP file!](../../releases/latest) |
+| --- |
+
+> [!CAUTION]
+> Self and external collisions are not implemented correctly yet, and are [very buggy](#why-are-collisions-so-bad).
+>
+> Ground collisions are correct to VBD, but need to be updated to use hard constraints from AVBD.
+>
+> I'm working on collisions at the moment.
+
+## Features
+
+### From [TinyVBD](https://github.com/AnkaChan/TinyVBD)
+  - [x] [Mass-spring constraints](https://github.com/AnkaChan/TinyVBD/blob/main/main.cpp#L381) (for strings)
+  - [x] [Accelerated convergence method](https://github.com/AnkaChan/TinyVBD/blob/main/main.cpp#L429) (section 3.8)
+  - [x] [Hessian direct inverse](https://github.com/AnkaChan/CuMatrix/blob/main/CuMatrix/MatrixOps/CuMatrix.h#L235)
+
+### From [Gaia](https://github.com/AnkaChan/Gaia)
+  - [x] [VBD integration](https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBD_BaseMaterial.cpp#L18) (inertia, inertia and acceleration, adaptive)
+  - [x] [Neo-hookean constraints](https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBD_NeoHookean.cpp) (for tetrahedrons)
+  - [x] [General damping](https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBDPhysics.cpp#L2786)
+
+### From [NVIDIA Warp](https://github.com/NVIDIA/warp/blob/main/warp/sim/integrator_vbd.py)
+  - [x] [Ground collisions](https://github.com/NVIDIA/warp/blob/main/warp/sim/integrator_vbd.py#L513)
+  - [x] [Ground friction](https://github.com/NVIDIA/warp/blob/main/warp/sim/integrator_vbd.py#L1188)
+  - [x] [Ground damping](https://github.com/NVIDIA/warp/blob/main/warp/sim/integrator_vbd.py#L534)
+
+### From [AVBD-2D](https://github.com/savant117/avbd-demo2d)
+  - [x] [Spring constraints](https://github.com/savant117/avbd-demo2d/blob/main/source/spring.cpp) (currently missing 6 DOF support)
+  - [x] [Joint constraints](https://github.com/savant117/avbd-demo2d/blob/main/source/joint.cpp) (currently missing 6 DOF support)
+  - [x] [Hard constraints](https://github.com/savant117/avbd-demo2d/blob/main/source/solver.cpp#L181-L191) (adaptive stiffness for AVBD constraint types)
+  - [x] [Dual constraint updates](https://github.com/savant117/avbd-demo2d/blob/main/source/solver.cpp#L205)
+  - [x] [Breaking constraints](https://github.com/savant117/avbd-demo2d/blob/main/source/solver.cpp#L218)
+  - [x] [Hessian LDLT decomposition](https://github.com/savant117/avbd-demo2d/blob/main/source/maths.h#L325)
+  - [x] [SPD hessian approximation](https://github.com/savant117/avbd-demo2d/blob/main/source/solver.cpp#L188) (section 3.5)
+
+### From [Vellum](https://www.sidefx.com/docs/houdini/vellum/overview.html) (XPBD)
+  - [x] Vellum integration (1st order, 2nd order)
+  - [x] Self and external collisions (very buggy, to be replaced soon)
+  - [x] Stopped, permanent and animated pin support
+  - [x] Custom forces support
+  - [x] [Graph coloring](https://www.sidefx.com/docs/houdini/nodes/sop/graphcolor.html)
+
+### From [Otis](https://www.sidefx.com/docs/houdini/nodes/sop/otissolver.html) (if Houdini 21 or above)
+  - [x] [Hessian approximation using eigenvalue projection](https://www.cs.columbia.edu/cg/abs-psd/paper.pdf)
+
+## Todo
+- [ ] Steal from [NVIDIA Warp](https://github.com/NVIDIA/warp)
+  - [ ] [StVK energy definition](https://github.com/NVIDIA/warp/blob/main/warp/sim/integrator_vbd.py) (for cloth)
+- [ ] Steal from [Offset Geometric Contact](https://graphics.cs.utah.edu/research/projects/ogc/) or [AVBD](https://graphics.cs.utah.edu/research/projects/avbd/)
+  - [ ] Self collisions
+  - [ ] External collisions
+- [ ] Steal from [AVBD](https://graphics.cs.utah.edu/research/projects/avbd/)
+  - [ ] [Motor constraints](https://github.com/savant117/avbd-demo2d/blob/main/source/motor.cpp)
+  - [ ] Sticking contacts
+  - [ ] Post stabilization
+  - [ ] 6 DOF support (packed prims)
+  - [ ] Hard constraints for collisions
+  - [ ] Update all existing constraints to AVBD
+- [ ] Steal from [Stable Cosserat Rods](https://github.com/jerry060599/StableCosseratRods)
+  - [ ] Cosserat rod energy definition
+- [ ] Steal from myself
+  - [ ] SDF collisions
+  - [ ] Add bounce for collisions
+  - [ ] Stop everything exploding all the time
+  - [ ] Convert from HDALC -> HDA
+- [ ] Touch grass
+
+## BREAKING NEWS: Otis Solver!
+
+You heard it here first! The [new Otis solver in Houdini 21](https://www.sidefx.com/docs/houdini/nodes/sop/otissolver.html) uses Vertex Block Descent!
+
+They made some nice improvements for stability, including several new hessian approximations. It also runs in chunks of 16 for some reason. They even added new collision handling based on how VBD did it!
+
+Currently it's specialized for muscle and tissue, so it might be a while until it gets support for rigid bodies (packed prims). I'm planning to add support for this soon, so we'll see who wins!
+
+## What's Vertex Block Descent?
+
+VBD is very similar to Vellum. The main differences are constraints and collisions.
+
+Vellum uses a technique called [XPBD (Extended Position-Based Dynamics)](https://matthias-research.github.io/pages/publications/XPBD.pdf). XPBD uses constraints to simulate soft body behaviour. Constraints are solved in parallel workgroups (colors) in OpenCL for better performance. Colors are groups of constraints that aren't directly connected.
+
+Cloth is a good example of a soft body. It's easy to bend but hard to stretch. In XPBD this is simulated with distance constraints. Distance constraints try to preserve their rest length. When you stretch or squash a distance constraint, it pulls the points towards the middle until they reach their rest length again. Since shortening one constraint makes others longer, it's an iterative process. It propagates over several iterations until everything converges to the target length.
+
+<img src="./images/edging.png" width="700">
+
+VBD constraints are similar, but they're defined in terms of energy instead. The goal is reducing overall variational energy by reducing local energy per point. VBD constraints run over each point rather than each prim, meaning less workgroups (colors) overall. The Graph Color node allows workgroups for points as well as prims, so it works both for VBD and XPBD.
+
+<img src="./images/energyreduction.png" width="700">
+
+The image above is for mass-spring energy, based on the rest length like in XPBD. Rather than directly using the rest length, the energy contributions get added to a force gradient and a hessian matrix. Once all the contributions are added, the position gets updated.
+
+```js
+vector force = 0;
+matrix3 hessian = 0;
+
+// For each connected constraint (and extra forces)
+force += constraintGradient;
+hessian += constraintHessian;
+
+// Reduce the variational energy of the system
+v@P += force * invert(hessian);
+```
+
+Here's a comparison between Vellum and VBD:
+
+|  | Vellum (XPBD) | VBD | Advantage | Disadvantage |
+| --- | --- | --- | --- | --- |
+| **Runs over** | <p align="center">Prim colors<br><img src="./images/color_prims.png" height="120"></p> | <p align="center">Point colors<br><img src="./images/color_points.png" height="120"></p> | Less colors/workgroups, better for parallelization (in theory) | Takes longer to converge for stiff constraints |
+| **Iterations** | Gauss-Seidel (for constraint iterations) and Jacobi (for smoothing iterations) | Gauss-Seidel | Reaches a global solution faster | May introduce jittering |
+| **Integration** | Inertia + acceleration | Inertia + acceleration or adaptive | Better energy preservation | Strange gravity reduction issues |
+| **Constraints** | XPBD based | Energy based | Better for larger mass ratios | Randomly explodes due to hessian matrix inversion |
+| **Collisions** | Detangle based | IPC based | Very accurate (not implemented yet though) | Slower to compute |
+
+The most important part of VBD is the energy definition, which depends on the constraint type. Here's a few:
+- Mass-spring (in [TinyVBD](https://github.com/AnkaChan/TinyVBD) but [removed from Gaia](https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBD_MassSpring.cpp))
+- StVK (in [NVIDIA Warp](https://github.com/NVIDIA/warp/blob/main/warp/sim/integrator_vbd.py#L220))
+- Neo-hookean (in [Gaia](https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBD_NeoHookean.cpp))
+- Spring (in [AVBD](https://github.com/savant117/avbd-demo2d/blob/main/source/spring.cpp), mass-spring but with a different formula)
+- Joint (in [AVBD](https://github.com/savant117/avbd-demo2d/blob/main/source/joint.cpp))
+- Motor (in [AVBD](https://github.com/savant117/avbd-demo2d/blob/main/source/motor.cpp))
+
+I've implemented most of these as different constraint types, so you can connect them together like in Vellum.
+
+## What's Augmented Vertex Block Descent?
+
+AVBD is an extension to VBD mainly to improve stiffness. It adds hard constraints, an extension to regular constraints meaning the stiffness gets changed adaptively.
+
+Stiffness is stored on the prims, so both the points (primal elements) and prims (dual elements) must be updated. As you might expect, looping over both points and prims is around 2x slower. Luckily I found you can merge the dual solve logic by tracking how many points are updated. Once the last point is updated, it's safe to dual solve the prims.
+
+Adaptive stiffness currently only affects AVBD constraints. Eventually I'll rewrite the other VBD constraints to use it too.
+
+AVBD also includes rigid bodies in a hacky way. Instead of solving each point of the rigid body, they solve the entire body as one point with 6 DOF (like a packed prim). This allows each point to have a rotation, included in the hessian for better results.
+
+I think this is misleading, it gives a false impression of stiffness and goes against the design of VBD, but I'll eventually include packed prims and their rotations in the hessians. For now AVBD constraints solve translation but not rigid rotation.
+
+AVBD also includes a SPD hessian approximation which greatly improves stability, used on all constraints by default. However it causes instability for neo-hookean constraints, so it's optional for them.
+
+Personally I think dual updates could help, but not in the form implemented by AVBD. Vellum (XPBD) already uses dual updates for everything, with much greater success since it updates both sides of the constraint at a time (see [stiffness limits](#why-does-stiffness-have-a-limit)). Even though stiffness gets affected by dual updates in AVBD, it only gets applied in primal updates. In other words, AVBD runs 2x slower than VBD without the benefits of dual updating you'd expect from XPBD.
+
+## Is VBD faster than Vellum (XPBD)?
+
+Despite the hype, sadly not. It's near impossible for VBD to be faster than XPBD.
+
+On paper VBD is faster because it runs over points, which have less graph colors than prims. Graph colors control the number of workgroups, meaning how many points can be processed at the same time.
+
+<img src="./images/vellum_vs_vbd.png" height="500">
+
+While it's true points have less graph colors, for all constraints in VBD each point loops over its connections to compute their energy contributions. This adds tons of extra operations, often 2x more than XPBD!
+
+<img src="./images/vellum_vs_vbd2.png" height="500">
+
+Even worse, these operations are expensive matrix calculations. The worst culprit is neo-hookean constraints. Tetrahedral meshes are densely connected, and each tet computes a 9x9 matrix!
+
+## Why does stiffness have a limit?
+
+Like with Vellum (XPBD), stiff objects are limited by the number of constraint iterations and substeps. The more constraint iterations and substeps, the more accurately stiff objects are resolved.
+
+VBD also has accelerated convergence method meant to improve convergence for stiff constraints. It's named "Improve Convergence" in the Advanced tab and disabled by default, as it tends to explode with high values. AVBD also adds dual solving meant to improve stiffness. This is used for all AVBD constraints.
+
+Personally I think Vellum has a huge advantage over VBD for stiffness, since it updates prims instead of points. For distance constraints this means both sides of the edge. You can easily match the target length just by spacing the points to the exact distance. After one iteration, you can guarantee the edge is the right length. This is much harder with VBD, since it only updates one point at a time.
+
+## Why are collisions so bad?
+
+I'm still working on collisions, they aren't been implemented properly yet (apart from ground collisions).
+
+VBD solves collisions as soft constraints, meaning collisions get added onto the force and hessian like everything else.
+
+In practice this means other forces can overpower collisions. For example, stiffer materials than the ground can penetrate it. This can be fixed by increasing the stiffness of the ground, or reducing the stiffness of everything else.
+
+AVBD adds hard constraints which should prevent this from happening, but I haven't implemented this for collisions yet.
+
+## Why does it explode randomly?
+
+VBD involves updating the position based on force elements and a hessian matrix:
+
+```js
+v@P += force * invert(hessian); // force and hessian depend on the energy definition, eg mass-spring or neo-hookean
+```
+
+`invert(hessian)` is very unstable, so everyone tries to bandaid it in various ways. The [VBD paper](https://graphics.cs.utah.edu/research/projects/vbd/vbd-siggraph2024.pdf) uses the determinant of the matrix:
+
+```js
+if (abs(determinant(hessian)) > 1e-7) { // if |det(H𝑖)| > 𝜖 for some small threshold 𝜖
+  v@P += force * invert(hessian);
+}
+```
+
+This helps, but it also explodes when the values gets too large (for example with very stiff constraints).
+
+The [AVBD paper](https://graphics.cs.utah.edu/research/projects/avbd/Augmented_VBD-SIGGRAPH25.pdf) uses an approximation to make the hessian positive semi-definite. This massively improves stability so it's used on all constraint types by default, except neo-hookean which is optional. Neo-hookean often fully degenerates when it's enabled.
+
+## AVBD Q&A
+
+The recent [Augmented Vertex Block Descent (AVBD) paper](https://graphics.cs.utah.edu/research/projects/avbd/) adds many improvements to VBD.
+
+I asked the authors about some differences I noticed. They responded with lots of useful information. Thanks guys!
+
+### Missing accelerated convergence
+
+Hi Chris, In the original VBD paper and in TinyVBD, they used an acceleration method to improve convergence (Section 3.8). I noticed in AVBD there's no mention of this method. Was it causing too much instability? Thanks!
+
+> Hi, yeah we ended up not using the acceleration from VBD as it was in general kind of unstable and difficult to tune, even with the original VBD method. It would be interesting to explore other acceleration methods as future work though.
+> 
+> -Chris
+
+> No, we haven't looked into acceleration for AVBD.
+> 
+> -Cem
+
+### Energy definition used
+
+Hi Chris, I was wondering what type energy you used for constraints? There were multiple used in the VBD paper, including mass-spring, StVK and neo-hookean. It looks like you used mass-spring energy. Is this correct, or did you use neo-hookean? Thanks!
+
+> Hello, so you are correct, in our demos we only used a simple spring energy for the deformable examples, as we weren't focused on rehashing what the original VBD paper showed. However, in AVBD, you can use any energy that works in VBD, such as the ones you mentioned. This is because AVBD is purely an extension of VBD. The only thing to keep in mind with those more complex energy types, is that you need to be careful about how you solve each block since their hessians can be indefinite.
+>
+> In general, you can follow the same pattern that AVBD uses for constraint energies. That is, decompose the hessian into an SPD part and a non-SPD part, then use the diagonal lumped approximation proposed in the paper for the non-SPD part.
+> Hope that helps!
+> 
+> -Chris
+
+> No. The AVBD tests we have are for contacts and joints. VBD already covers soft bodies. AVBD makes no changes to that.
+> 
+> -Cem
+
+### Previous velocity definition
+
+> [!NOTE]
+> I noticed this while looking into Vellum. Vellum uses 4 variables to track the previous 2 values of position and velocity:
+>
+> - `@pprevious` (`@P` 1 substep ago)
+> - `@plast` (`@P` 2 substeps ago)
+> - `@vprevious` (`@v` 1 substep ago)
+> - `@vlast` (`@v` 2 substeps ago)
+>
+> Vellum sets all of these at the start of each substep. They're needed for 1st and 2nd order integration.
+>
+> However, TinyVBD and AVBD set `@vprevious` in a different place. I thought this was a typo, but turns out it's not.
+
+Hi Chris, I was wondering if the order of [these 2 lines](https://github.com/savant117/avbd-demo2d/issues/4) is correct?
+
+```c
+body->prevVelocity = body->velocity; 
+if (body->mass > 0) 
+   body->velocity = (body->position - body->initial) / dt;
+```
+
+It seems like the previous velocity should be set after it gets recalculated, instead of before.
+
+I saw the [same code in TinyVBD](https://github.com/AnkaChan/TinyVBD/blob/main/main.cpp#L349-L350), but I believe it is a mistake. The [opposite code is present in Gaia](https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBD_BaseMaterial.h#L256).
+
+> The current code is correct (and probably in TinyVBD as well), since we use prevVelocity to compute an acceleration estimate during the adaptive warmstarting at the beginning of the step:
+>
+> `float3 accel = (body->velocity - body->prevVelocity) / dt;`
+>
+> If we switched the order as suggested, then this acceleration would always be zero, and the adaptive warmstart would not help.
+
+### Rigid body design concerns
+
+Hi Chris, I've been looking through [the code for AVBD 2D](https://github.com/savant117/avbd-demo2d) and want to ask about the design. The way it's implemented seems strange, with many differences to the original paper. For example I was expecting cubes to be implemented as 4 points connected by hard constraints, but instead they're represented as a unique class of object (rigid).
+
+To me it reads more like a [rigid body solver](https://youtu.be/zpn49cadAnE?si=g4CsGfIuSV3zV6QU) with ideas from VBD on top. For example the loop of the solver goes over rigid bodies. This differs from the AVBD paper, which loops over each point. The code for springs also includes rotation, which is more a rigid body concept.
+
+I'm wondering how this applies to a cloth sim for example. Would you create a rigid body for each vertex of the cloth? In this case, what role does the rotation have?
+
+> AVBD and even VBD are not tied to the representation of the degrees of freedom (ie particles, rigid bodies, etc). You can use any representation that you wish. In AVBD we mainly showcased rigid bodies as these were the easiest to show examples of hard constraints. However, you could certainly create hard constraints between particles in AVBD. Also, collisions solved using AVBD are applicable to both particles and rigid bodies. Practically, when solving a particle vertex, you'd be solving a 3x3 system. With rigids, a 6x6 system.
+>
+> For a cloth sim, usually you'd use particles, and each AVBD vertex maps to one vertex of the rendered mesh - no reason to use rigid dofs for this. In general, just use whichever dof representation makes sense for what you are simulating - AVBD / VBD support all of them!
+
+### Hessian to quaternion representation
+
+Hi Chris, I'm currently working on rewriting the logic for 6 DOF bodies based on the [AVBD paper](https://graphics.cs.utah.edu/research/projects/avbd/Augmented_VBD-SIGGRAPH25.pdf). I was hoping you could provide more information about the math used to translate between hessian and quaternion representations, as I couldn't find much information about it in the paper.
+
+In my implementation I used the same conventions as Vellum (XPBD) in Houdini. Using those conventions, `@w` is the angular velocity (`vector`) and `@orient` is the angle (`vector4` / `quaternion`).
+
+This means [equation 21](https://graphics.cs.utah.edu/research/projects/avbd/Augmented_VBD-SIGGRAPH25.pdf) looks like this:
+
+```c
+orient = normalize(orient + timeinc * 0.5f * qmultiply((quat)(w, 0.0f), orient));
+```
+
+And [equation 20](https://graphics.cs.utah.edu/research/projects/avbd/Augmented_VBD-SIGGRAPH25.pdf) looks like this:
+
+```c
+w = (2.0f * qmultiply(orient, qinvert(orientprevious)).xyz) / timeinc;
+```
+
+Both of these seem to work correctly, and give matching results to other rigid body solvers in Houdini.
+Where it gets foggy is translating between hessians and quaternions. It would be amazing to get more information about how this works in 3D.
+
+In [AVBD-2D](https://github.com/savant117/avbd-demo2d), the bottom section (`position->z`) and the sides of the hessian contain angular components:
+
+```c
+H = {
+    dxx.row[0].x, dxx.row[0].y, dxr.x, // dxr is angular
+    dxx.row[1].x, dxx.row[1].y, dxr.y, // dxr is angular
+    dxr.x,        dxr.y,        drr    // dxr and drr are angular
+};
+```
+
+With 6 DOF, I'm guessing this becomes a 6x6 matrix where the corners are a mix of linear and angular, then angular in the bottom:
+
+```c
+H = { linear_hessian, linear_angular_hessian
+      linear_angular_hessian, angular_hessian };
+```
+
+If this is correct, I'm wondering how you reduced the 3x3 hessians (`linear_angular_hessian` and `angular_hessian`) into a single quaternion (`@orient` in my case) ?
+
+The 2D version solves both the linear and angular components using the same equation. In other words, it does this for everything:
+
+```c
+position += force * invert_LDLT(hessian);
+```
+
+I'm not sure how this works when you use quaternions. You can no longer simply add, since the angle is a `vector4` and the hessians are `matrix3`:
+
+```c
+orient += angular_force *  invert_LDLT(angular_hessian) // Doesn't work, angular_hessian is 3x3 and orient is vector4
+```
+
+I'm guessing the way this was handled is by flattening the 3 hessians to a `vector` representation:
+
+```c
+vector vector_representation; // Something involving angular_hessian
+orient = normalize(orient + 0.5 * qmultiply((quat)(flat_vector3_representation, 0), orient));
+```
+
+Is this correct? If so, I'm very curious about the exact logic used here.
+
+> So in 3D, your intuition is spot on. You'll first build a 6x6 system like:
+> 
+> ```c
+> H = { linear_hessian, linear_angular_hessian
+>       linear_angular_hessian, angular_hessian };
+>  ```
+>
+> Then you solve for the 6d update:
+>
+> ```c
+> dx = force * invert_LDLT(hessian)
+> ```
+>
+> Then:
+>
+> ```c
+> position += dx(0, 3)
+> orient = normalize(orient + 0.5 * qmultiply((quat)(dx(3, 6), 0), orient));
+> ```
+> 
+> Actually in our code, we just override the `+=` operator for quaternions to perform the above quaternion update.
+>
+> Conceptually, when computing dx, for the angular part we are really getting a rotation vector, which is then used to update the actual orientation representation. The quaternion math there is just converting the rotation vector update to a quaternion update.
+>
+> Note that you don't *have* to use quaternions for your angular representation (which would change the angular update rule). For example, if your orientation was also using rotation vectors as the representation, then you can directly add the orientation update using plain `+=`. (I wouldn't recommend rotation vectors in practice since they have various issues, just illustrating the point)
+>
+> Another representation that can work is a 3x3 rotation matrix. This would also have a different update rule for `+=` (Rodriguez formula).
+>
+> We are currently working on a 3d version of the 2d demo which should provide a good reference implementation. But hopefully that helps you in the meantime!
+>
+> Forgot to mention, checkout [this paper's appendix](https://www.cs.mcgill.ca/~sandre17/geomstiffness) (*Geometric Stiffness for Real-time Constrained Multibody Dynamics* by Andrews et al.) for some derivations of the hessian for various constraint types.
+>
+> You'll see references to `lambda`, you just replace those with the force `F = K * C + lambda`.
+
+## How does Vertex Block Descent run?
+
+VBD's high level design is simple, it's really just 3 steps. AVBD adds another 2 steps.
+
+### 1. Integrate the positions
+
+Add the velocity to the position (same as Vellum). VBD uses a warmstarting strategy to scale the gravity term below.
+
+```js
+v@pprevious = v@P;
+
+// First-order integration, same as Vellum
+v@v += v@gravity * f@TimeInc;
+v@inertia = v@P + v@v * f@TimeInc;
+v@P = v@inertia;
+```
+
+| [OpenCL version](./ocl/forwardStep.cl) | [VEX version (outdated)](./vex/forwardStep.c) |
+| --- | --- |
+
+### 2. Update the dual variables (AVBD)
+
+AVBD adjusts the stiffness based on `lambda` and `penalty`. They get dampened by `alpha` and `gamma` before constraint solving to prevent explosions.
+
+```js
+// Warmstart the dual variables and penalty parameters (Eq. 19)
+@lambda *= alpha * gamma;
+
+// Penalty is safely clamped to a minimum and maximum value
+@penalty = clamp(@penalty * gamma, PENALTY_MIN, PENALTY_MAX);
+
+// If it's not a hard constraint, we don't let the penalty exceed the material stiffness
+@penalty = min(@penalty, f@stiffness);
+```
+
+| [OpenCL version](./ocl/forwardStepDual.cl) | [Python version](https://github.com/savant117/avbd-demo2d/blob/main/source/solver.cpp#L105) |
+| --- | --- |
+
+### 3. Apply the constraints
+
+This is the hard part. The core of VBD is moving the position based on a force gradient and a hessian matrix.
+
+When the hessian doesn't explode, moving the position reduces the overall variational energy.
+
+In AVBD, `lambda` and `penalty` change the results of `accumulateMaterialForceAndHessian()`.
+
+> [!CAUTION]
+> **This should be run in workgroups based on graph coloring!**
+>
+> If points move while their neighbours access them (like if running in sequential order), it breaks the assumption used by VBD:
+> 
+>  > We adjust each vertex separately, assuming the others remain fixed
+> 
+> This causes growing error each iteration, leading VBD to explode much more than usual.
+
+```js
+vector force = 0;
+matrix3 hessian = 0;
+
+// Add contributions to force elements and hessian
+accumulateInertiaForceAndHessian(force, hessian); // Contributions due to mass and inertia
+accumulateMaterialForceAndHessian(force, hessian); // Contributions due to connected constraints (eg mass-spring)
+accumulateDampingForceAndHessian(force, hessian); // Contributions due to damping
+accumulateBoundaryForceAndHessian(force, hessian); // Contributions due to boundaries (eg ground plane)
+accumulateCollisionForceAndHessian(force, hessian); // Contributions due to collisions
+
+v@P += force * invert(hessian); // Reduce the variational energy of the system
+```
+
+| [OpenCL version](./ocl/solveConstraints.cl) | [VEX version (outdated)](./vex/solveConstraints.c) |
+| --- | --- |
+
+### 4. Dual update (AVBD)
+
+Clamp `lambda` and `penalty` to prevent them exploding again. The `C` variable depends on the constraint type.
+
+```js
+// Use lambda as 0 if it's not a hard constraint
+float lambdaTmp = isinf(stiffness) ? lambda[i] : 0;
+
+// Update lambda (Eq 11)
+lambdaTmp = lambda[i] = clamp(penalty[i] * C[i] + lambdaTmp, fmin[i], fmax[i]);
+
+// Update the penalty parameter and clamp to material stiffness if we are within the force bounds (Eq. 16)
+if (lambdaTmp > fmin[i] && lambdaTmp < fmax[i]) {
+    penalty[i] = min(penalty[i] + beta * abs(C[i]), min(PENALTY_MAX, stiffness));
+}
+```
+
+| [OpenCL version](https://github.com/search?q=repo%3AMysteryPancake%2FHoudini-VBD%20dualUpdate&type=code) | [Python version](https://github.com/savant117/avbd-demo2d/blob/main/source/solver.cpp#L205) |
+| --- | --- |
+
+### 5. Update the velocities
+
+Update the velocities based on the change in position (same as Vellum).
+
+```js
+// First-order velocities
+v@v = (v@P - v@pprevious) / f@TimeInc;
+```
+
+| [OpenCL version](./ocl/updateVelocity.cl) | [VEX version (outdated)](./vex/updateVelocity.c) |
+| --- | --- |
+
+
+
+================================================
+FILE: hips/sop_MysteryPancake.vbd_constraints.1.0.hdalc
+================================================
+[Binary file]
+
+
+================================================
+FILE: hips/sop_MysteryPancake.vbd_constraints.1.3.hdalc
+================================================
+[Binary file]
+
+
+================================================
+FILE: hips/sop_MysteryPancake.vbd_constraints.1.4.hdalc
+================================================
+[Binary file]
+
+
+================================================
+FILE: hips/sop_MysteryPancake.vbd_constraints.1.5.hdalc
+================================================
+[Binary file]
+
+
+================================================
+FILE: hips/sop_MysteryPancake.vbd_solver.1.0.hdalc
+================================================
+[Binary file]
+
+
+================================================
+FILE: hips/sop_MysteryPancake.vbd_solver.1.1.hdalc
+================================================
+[Binary file]
+
+
+================================================
+FILE: hips/sop_MysteryPancake.vbd_solver.1.2.hdalc
+================================================
+[Binary file]
+
+
+================================================
+FILE: hips/sop_MysteryPancake.vbd_solver.1.3.hdalc
+================================================
+[Binary file]
+
+
+================================================
+FILE: hips/sop_MysteryPancake.vbd_solver.1.4.hdalc
+================================================
+[Binary file]
+
+
+================================================
+FILE: hips/sop_MysteryPancake.vbd_solver.1.5.hdalc
+================================================
+[Binary file]
+
+
+================================================
+FILE: hips/trailer_demos_v1.4.hiplc
+================================================
+Error reading file with 'utf-8': 'utf-8' codec can't decode byte 0xb8 in position 9429: invalid start byte
+
+
+================================================
+FILE: hips/vertex_block_descent_v1.1.hiplc
+================================================
+Error reading file with 'utf-8': 'utf-8' codec can't decode byte 0xee in position 5741: invalid continuation byte
+
+
+================================================
+FILE: hips/vertex_block_descent_v1.2.hiplc
+================================================
+Error reading file with 'utf-8': 'utf-8' codec can't decode byte 0xf3 in position 5752: invalid continuation byte
+
+
+================================================
+FILE: hips/vertex_block_descent_v1.3.hiplc
+================================================
+Error reading file with 'utf-8': 'utf-8' codec can't decode byte 0x9d in position 6397: invalid start byte
+
+
+================================================
+FILE: hips/vertex_block_descent_v1.4.hiplc
+================================================
+Error reading file with 'utf-8': 'utf-8' codec can't decode byte 0x93 in position 8745: invalid start byte
+
+
+================================================
+FILE: hips/vertex_block_descent_v1.5.hiplc
+================================================
+Error reading file with 'utf-8': 'utf-8' codec can't decode byte 0xc1 in position 8944: invalid start byte
+
+
+================================================
+FILE: hips/vertex_block_descent_v1.hiplc
+================================================
+Error reading file with 'utf-8': 'utf-8' codec can't decode byte 0xbe in position 3010: invalid start byte
+
+
+================================================
+FILE: ocl/forwardStep.cl
+================================================
+#include <quaternion.h>
+
+kernel void forwardStep(
+    fpreal timeinc,
+    int simframe,
+    fpreal3 gravity,
+    int _bound_initialization,
+    int _bound_P_length,
+    global fpreal * restrict _bound_P,
+    int _bound_v_length,
+    global fpreal * restrict _bound_v,
+    int _bound_inertia_length,
+    global fpreal * restrict _bound_inertia,
+    int _bound_pprevious_length,
+    global fpreal * restrict _bound_pprevious,
+    int _bound_vprevious_length,
+    global fpreal * restrict _bound_vprevious,
+    int _bound_mass_length,
+    global fpreal * restrict _bound_mass,
+#ifdef HAS_stopped
+    int _bound_stopped_length,
+    global int * restrict _bound_stopped,
+#endif
+    int _bound_orient_length,
+    global fpreal * restrict _bound_orient,
+    int _bound_w_length,
+    global fpreal * restrict _bound_w)
+{
+    int idx = get_global_id(0);
+    if (idx >= _bound_P_length) return;
+
+    const fpreal mass = _bound_mass[idx];
+    if (mass <= 0.0f) return; // Skip pinned points
+
+#ifdef HAS_stopped
+    // @stopped = 1 pins position
+    const int stopped = _bound_stopped[idx];
+    if (!(stopped & 1))
+    {
+#endif
+
+    // Gravity gets added directly to the velocity
+    // This is the same as adding it to the inertia as @gravity * @TimeInc * @TimeInc
+    fpreal3 v = vload3(idx, _bound_v);
+    v += gravity * timeinc;
+    vstore3(v, idx, _bound_v);
+
+    // First order integration, same as Vellum
+    const fpreal3 P = vload3(idx, _bound_P);
+    const fpreal3 inertia = P + v * timeinc;
+    vstore3(inertia, idx, _bound_inertia);
+        
+#if initialization == 0
+    // Inertia
+    const fpreal3 vprevious = vload3(idx, _bound_vprevious);
+    vstore3(P + vprevious * timeinc, idx, _bound_P);
+    
+#elif initialization == 1
+    // Inertia and acceleration
+    vstore3(inertia, idx, _bound_P);
+    
+#elif initialization == 2
+    // Adaptive
+    if (simframe <= 2.0f)
+    {
+        // We don't have @vprevious, use inertia and acceleration
+        vstore3(inertia, idx, _bound_P);
+    }
+    else
+    {
+        const fpreal3 vprevious = vload3(idx, _bound_vprevious);
+        const fpreal3 accel = (v - vprevious) / timeinc;
+        const fpreal gravNorm = length(gravity);
+        const fpreal3 gravDir = gravity / gravNorm;
+        const fpreal accelWeight = clamp(dot(accel, gravDir) / gravNorm, 0.0f, 1.0f);
+        vstore3(P + vprevious * timeinc + gravity * accelWeight * timeinc * timeinc, idx, _bound_P);
+    }
+#endif
+
+#ifdef HAS_stopped
+    }
+    // @stopped = 2 pins rotation
+    if (stopped & 2) return;
+#endif
+
+    // First order angular integration from AVBD (Eq. 9)
+    // https://graphics.cs.utah.edu/research/projects/avbd/Augmented_VBD-SIGGRAPH25_RTL.pdf
+    quat orient = vload4(idx, _bound_orient);
+    const fpreal3 w = vload3(idx, _bound_w);
+    orient += timeinc * 0.5f * qmultiply((quat)(w, 0.0f), orient);
+    vstore4(normalize(orient), idx, _bound_orient);
+}
+
+
+================================================
+FILE: ocl/forwardStep_vellum.cl
+================================================
+#include <quaternion.h>
+
+kernel void forwardStep_vellum(
+    float timeinc,
+    fpreal3 gravity,
+    int _bound_P_length,
+    global fpreal * restrict _bound_P,
+    int _bound_orient_length,
+    global fpreal * restrict _bound_orient,
+    int _bound_v_length,
+    global fpreal * restrict _bound_v,
+    int _bound_pprevious_length,
+    global fpreal * restrict _bound_pprevious,
+#ifdef HAS_plast
+    int _bound_plast_length,
+    global fpreal * restrict _bound_plast,
+#endif
+    int _bound_vprevious_length,
+    global fpreal * restrict _bound_vprevious,
+#ifdef HAS_vlast
+    int _bound_vlast_length,
+    global fpreal * restrict _bound_vlast,
+#endif
+    int _bound_inertia_length,
+    global fpreal * restrict _bound_inertia,
+    int _bound_mass_length,
+    global fpreal * restrict _bound_mass,
+#ifdef HAS_stopped
+    int _bound_stopped_length,
+    global int * restrict _bound_stopped,
+#endif
+#ifdef HAS_orientlast
+    int _bound_orientlast_length,
+    global fpreal * restrict _bound_orientlast,
+#endif
+#ifdef HAS_wlast
+    int _bound_wlast_length,
+    global fpreal * restrict _bound_wlast,
+#endif
+    int _bound_w_length,
+    global fpreal * restrict _bound_w,
+    int _bound_orientprevious_length,
+    global fpreal * restrict _bound_orientprevious,
+    int _bound_wprevious_length,
+    global fpreal * restrict _bound_wprevious)
+{
+    int idx = get_global_id(0);
+    if (idx >= _bound_P_length) return;
+
+    const fpreal mass = _bound_mass[idx];
+    if (mass <= 0.0f) return; // Skip pinned points
+
+#ifdef HAS_stopped
+    // @stopped = 1 pins position
+    const int stopped = _bound_stopped[idx];
+    if (!(stopped & 1))
+    {
+#endif
+
+    // Gravity gets added directly to the velocity
+    // This is the same as adding it to the inertia as @gravity * @TimeInc * @TimeInc
+    fpreal3 v = vload3(idx, _bound_v);
+    v += gravity * timeinc;
+    vstore3(v, idx, _bound_v);
+        
+#if defined(HAS_plast) && defined(HAS_vlast)
+    // Second order integration (BDF2)
+    const fpreal3 pprevious = vload3(idx, _bound_pprevious);
+    const fpreal3 plast = vload3(idx, _bound_plast);
+    const fpreal3 vprevious = vload3(idx, _bound_vprevious);
+    const fpreal3 vlast = vload3(idx, _bound_vlast);
+    
+    v = (4.0f * vprevious - vlast + 2.0f * (v - vprevious)) / 3.0f;
+    const fpreal3 inertia = (4.0f * pprevious - plast + 2.0f * timeinc * v) / 3.0f;
+#else
+    // First order integration
+    const fpreal3 P = vload3(idx, _bound_P);
+    const fpreal3 inertia = P + v * timeinc;
+#endif
+
+    vstore3(inertia, idx, _bound_inertia);
+    vstore3(inertia, idx, _bound_P);
+
+#ifdef HAS_stopped
+    }
+    // @stopped = 2 pins rotation
+    if (stopped & 2) return;
+#endif
+
+    // Angular integration
+    quat orient = vload4(idx, _bound_orient);
+    fpreal3 w = vload3(idx, _bound_w);
+    
+#if defined(HAS_orientlast) && defined(HAS_wlast)
+    // Second order integration (BDF2)
+    // This isn't actually valid for quaternions, causes some weird results
+    const quat orientprevious = vload4(idx, _bound_orientprevious);
+    const quat orientlast = vload4(idx, _bound_orientlast);
+    const fpreal3 wprevious = vload3(idx, _bound_wprevious);
+    const fpreal3 wlast = vload3(idx, _bound_wlast);
+    
+    w = (4.0f * wprevious - wlast + 2.0f * (w - wprevious)) / 3.0f;
+    // Vellum has a mistake below where the last component is 1 instead of 0
+    const quat dqdt = 0.5f * qmultiply((quat)(w, 0.0f), orient);
+    orient = (4.0f * orientprevious - orientlast + 2.0f * timeinc * dqdt) / 3.0f;
+#else
+    // First order integration
+    orient += timeinc * 0.5f * qmultiply((quat)(w, 0.0f), orient);
+#endif
+
+    vstore4(normalize(orient), idx, _bound_orient);
+}
+
+
+================================================
+FILE: ocl/forwardStepDual.cl
+================================================
+// Constraint hash IDs, generated by constraintHash() in VEX
+// Shared with solveConstraints.cl
+#define AVBD_SPRING -1715226869
+#define AVBD_JOINT -1456250084
+
+// Faster but memory unsafe
+#define entriesAt_unsafe(_arr_, _idx_) (_arr_##_index[_idx_+1] - _arr_##_index[_idx_])
+#define compAt_unsafe(_arr_, _idx_, _compidx_) _arr_[_arr_##_index[_idx_] + _compidx_]
+
+#define entriesAt(_arr_, _idx_) ((_idx_ >= 0 && _idx_ < _arr_##_length) ? (_arr_##_index[_idx_+1] - _arr_##_index[_idx_]) : 0)
+#define compAt(_arr_, _idx_, _compidx_) ((_idx_ >= 0 && _idx_ < _arr_##_length && _compidx_ >= 0 && _compidx_ < entriesAt_unsafe(_arr_, _idx_)) ? _arr_[_arr_##_index[_idx_] + _compidx_] : 0)
+
+// Rough approximation to match Vellum
+// Shared with solveConstraints.cl
+const fpreal STIFFNESS_SCALE = 10.0f;
+
+// From https://github.com/savant117/avbd-demo2d/blob/main/source/joint.cpp#L27
+static void initialize_JointAVBD(
+    const int prim_id,
+    global int *_bound_primpoints,
+    global int *_bound_primpoints_index,
+    const int _bound_primpoints_length,
+    global fpreal *_bound_P,
+    const int _bound_P_length,
+    global fpreal *_bound_C,
+    const int _bound_C_length)
+{
+    const int pt0 = compAt(_bound_primpoints, prim_id, 0);
+    const int pt1 = compAt(_bound_primpoints, prim_id, 1);
+
+    const fpreal3 p0 = vload3(pt0, _bound_P);
+    const fpreal3 p1 = vload3(pt1, _bound_P);
+    
+    // C is the difference in position between each connected point
+    vstore3(p0 - p1, prim_id, _bound_C);
+}
+
+// Dual update from AVBD
+// From https://github.com/savant117/avbd-demo2d/blob/main/source/solver.cpp#L105
+kernel void forwardStepDual( 
+    fpreal alpha,
+    fpreal gamma,
+    fpreal PENALTY_MIN,
+    fpreal PENALTY_MAX,
+    int _bound_P_length,
+    global fpreal * restrict _bound_P,
+    int _bound_primpoints_length,
+    global int * restrict _bound_primpoints_index,
+    global int * restrict _bound_primpoints,
+    int _bound_C_length,
+    global fpreal * restrict _bound_C,
+    int _bound_lambda_length,
+    global fpreal * restrict _bound_lambda,
+    int _bound_penalty_length,
+    global fpreal * restrict _bound_penalty,
+    int _bound_stiffness_length,
+    global fpreal * restrict _bound_stiffness,
+    int _bound_type_hash_length,
+    global int * restrict _bound_type_hash,
+    int _bound_pointsupdated_length,
+    global int * restrict _bound_pointsupdated
+)
+{
+    const int idx = get_global_id(0);
+    if (idx >= _bound_C_length) return;
+
+    // Some constraints use initialization in the dual step
+    const int type = _bound_type_hash[idx];
+    switch (type)
+    {
+        case AVBD_SPRING:
+        {
+            // No initialization needed
+            break;
+        }
+        case AVBD_JOINT:
+        {
+            initialize_JointAVBD(idx, _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+                _bound_P, _bound_P_length, _bound_C, _bound_C_length);
+            break;
+        }
+        default:
+        {
+            // Ignore non AVBD constraints
+            return;
+        }
+    }
+    
+    // Warmstart the dual variables and penalty parameters (Eq. 19)
+    const fpreal3 lambda = vload3(idx, _bound_lambda);
+    vstore3(lambda * alpha * gamma, idx, _bound_lambda);
+    
+    // Penalty is safely clamped to a minimum and maximum value
+    fpreal3 penalty = vload3(idx, _bound_penalty);
+    penalty = clamp(penalty * gamma, PENALTY_MIN, PENALTY_MAX);
+    
+    // If it's not a hard constraint, we don't let the penalty exceed the material stiffness
+    const fpreal stiffness = _bound_stiffness[idx];
+    vstore3(min(penalty, (fpreal3)(stiffness * STIFFNESS_SCALE)), idx, _bound_penalty);
+    
+    // Dual updating is normally 2x slower when run separately to solveConstraints
+    // Luckily it can be merged into solveConstraints, as long as it happens after the last point update
+    _bound_pointsupdated[idx] = 0;
+}
+
+
+================================================
+FILE: ocl/resetOmega.cl
+================================================
+// For accelerated convergence, tends to explode so it's disabled by default
+kernel void resetOmega( 
+    int omega_length,
+    global fpreal * restrict omega)
+{
+    const int idx = get_global_id(0);
+    if (idx >= omega_length) return;
+    omega[idx] = 1.0f;
+}
+
+
+================================================
+FILE: ocl/solveConstraints.cl
+================================================
+// The new Otis solver in Houdini 21 also uses VBD
+// They forgot to cite their code sources though :)
+#if has_otis
+    // Otis has some new hessian approximations and definitions we can use here
+    #include "../sim/vbd_energy.cl"
+#else
+    // Otis includes matrix.h, otherwise we do it manually
+    #include <matrix.h>
+#endif
+
+// Constraint hash IDs, generated by constraintHash() in VEX
+#define VBD_MASS_SPRING 10827462
+#define VBD_NEO_HOOKEAN 1206786922
+#define AVBD_SPRING -1715226869
+#define AVBD_JOINT -1456250084
+
+// Faster but memory unsafe
+#define entriesAt_unsafe(_arr_, _idx_) (_arr_##_index[_idx_+1] - _arr_##_index[_idx_])
+#define compAt_unsafe(_arr_, _idx_, _compidx_) _arr_[_arr_##_index[_idx_] + _compidx_]
+
+#define entriesAt(_arr_, _idx_) ((_idx_ >= 0 && _idx_ < _arr_##_length) ? (_arr_##_index[_idx_+1] - _arr_##_index[_idx_]) : 0)
+#define compAt(_arr_, _idx_, _compidx_) ((_idx_ >= 0 && _idx_ < _arr_##_length && _compidx_ >= 0 && _compidx_ < entriesAt_unsafe(_arr_, _idx_)) ? _arr_[_arr_##_index[_idx_] + _compidx_] : 0)
+
+// Macro to load the attributes commonly used by AVBD
+#define LOAD_AVBD_ATTRIBS(prim_id) \
+    const fpreal3 lambda  = vload3(prim_id, _bound_lambda); \
+    const fpreal3 penalty = vload3(prim_id, _bound_penalty); \
+    const fpreal3 fmin    = vload3(prim_id, _bound_fmin); \
+    const fpreal3 fmax    = vload3(prim_id, _bound_fmax);
+
+// Rough approximation to match Vellum
+const fpreal STIFFNESS_SCALE = 10.0f;
+const fpreal DAMPING_SCALE = 0.001f;
+
+typedef fpreal fpreal9[9];
+typedef fpreal9 mat9[9];
+
+// Prefixed in case these get added to matrix.h later
+static fpreal3 _mat32vecmul(const mat32 a, const fpreal2 b)
+{
+    return (fpreal3)(dot(a[0], b), dot(a[1], b), dot(a[2], b));
+}
+
+static fpreal2 _mat32Tvecmul(const mat32 a, const fpreal3 b)
+{
+    return (fpreal2)(
+        dot((fpreal3)(a[0][0], a[1][0], a[2][0]), b),
+        dot((fpreal3)(a[0][1], a[1][1], a[2][1]), b)
+    );
+}
+
+static void _mat3adddiag(mat3 mout, const mat3 m, const fpreal x)
+{
+    mout[0][0] = m[0][0] + x;
+    mout[1][1] = m[1][1] + x;
+    mout[2][2] = m[2][2] + x;
+}
+
+// Helps compute tangents for friction based on the surface normal
+// From https://graphics.pixar.com/library/OrthonormalB/paper.pdf
+static void buildOrthonormalBasis(const fpreal3 n, mat32 out)
+{
+    const fpreal sign = copysign(1.0f, n.z);
+    const fpreal a = -1.0f / (sign + n.z);
+    const fpreal b = n.x * n.y * a;
+    out[0][0] = 1.0f + sign * n.x * n.x * a;
+    out[1][0] = sign * b;
+    out[2][0] = -sign * n.x;
+    out[0][1] = b;
+    out[1][1] = sign + n.y * n.y * a;
+    out[2][1] = -n.y;
+}
+
+// force * invert(hessian) using LDLT decomposition
+// From https://github.com/savant117/avbd-demo2d/blob/main/source/maths.h#L323
+static fpreal3 solveLDLT(
+    const fpreal3 force,
+    const mat3 hessian)
+{
+    // Compute LDL^T decomposition
+    const fpreal D1 = hessian[0][0];
+    const fpreal L21 = hessian[1][0] / hessian[0][0];
+    const fpreal L31 = hessian[2][0] / hessian[0][0];
+    const fpreal D2 = hessian[1][1] - L21 * L21 * D1;
+    const fpreal L32 = (hessian[2][1] - L21 * L31 * D1) / D2;
+    const fpreal D3 = hessian[2][2] - (L31 * L31 * D1 + L32 * L32 * D2);
+
+    // Forward substitution: Solve Ly = f
+    const fpreal y1 = force.x;
+    const fpreal y2 = force.y - L21 * y1;
+    const fpreal y3 = force.z - L31 * y1 - L32 * y2;
+
+    // Diagonal solve: Solve Dz = y
+    const fpreal z1 = y1 / D1;
+    const fpreal z2 = y2 / D2;
+    const fpreal z3 = y3 / D3;
+
+    // Backward substitution: Solve L^T x = z
+    fpreal3 x;
+    x.z = z3;
+    x.y = z2 - L32 * x.z;
+    x.x = z1 - L21 * x.y - L31 * x.z;
+
+    return x;
+}
+
+// out = force * invert(hessian) with a check similar to fabs(det3(hessian)) < epsilon
+// From https://github.com/AnkaChan/CuMatrix/blob/main/CuMatrix/MatrixOps/CuMatrix.h#L235
+static int solveDirect(
+    const fpreal3 force,
+    const mat3 hessian,
+    fpreal3 *out,
+    const fpreal epsilon)
+{
+    const fpreal3 s0 = hessian[0];
+    const fpreal3 s1 = hessian[1];
+    const fpreal3 s2 = hessian[2];
+
+    const fpreal3 adj0 = cross(s1, s2);
+    const fpreal3 adj1 = cross(s2, s0);
+    const fpreal3 adj2 = cross(s0, s1);
+
+    const fpreal det = dot(s0, adj0);
+    if (fabs(det) < epsilon * (fabs(s0.x * adj0.x) + fabs(s1.x * adj0.y) + fabs(s2.x * adj0.z))) return 0;
+
+    *out = (fpreal3)(dot(adj0, force), dot(adj1, force), dot(adj2, force)) / det;
+    return 1;
+}
+
+// Used for accelerated convergence, tends to explode. Probably will remove later
+// From https://github.com/AnkaChan/TinyVBD/blob/main/main.cpp#L193
+// Prefixed since this recently got added to the new Otis solver in Houdini 21
+static fpreal _getAcceleratorOmega(
+    const int order,
+    const fpreal pho,
+    const fpreal prev_omega)
+{
+    switch (order)
+    {
+        case 1:
+            return 1.0f;
+        case 2:
+            return 2.0f / (2.0f - (pho * pho));
+        default:
+            return 4.0f / (4.0f - (pho * pho) * prev_omega);
+    }
+}
+
+// Influence from inertia and mass. Sadly this also includes gravity, so damping also affects gravity
+// From https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBD_BaseMaterial.h#L359
+static void accumulateInertiaForceAndHessian(
+    fpreal3 *force,
+    mat3 hessian,
+    const fpreal mass,
+    const fpreal3 P,
+    const fpreal3 inertia,
+    const fpreal timeinc)
+{
+    const fpreal scale = mass / (timeinc * timeinc);
+    *force += (inertia - P) * scale;
+    _mat3adddiag(hessian, hessian, scale);
+}
+
+// Angular force and hessian, based on the AVBD paper
+static void accumulateInertiaForceAndHessian6DOF(
+    fpreal3 *force_angular,
+    mat3 hessian_angular)
+{
+    // TODO
+}
+
+// SPD diagonal approximation of the hessian from AVBD
+// This greatly improves stability for stiff constraints, but causes issues with neo-hookean
+static void spdApproximation(mat3 h)
+{
+    // Column norm in the diagonal
+    h[0][0] = length((fpreal3)(h[0][0], h[1][0], h[2][0]));
+    h[1][1] = length((fpreal3)(h[0][1], h[1][1], h[2][1]));
+    h[2][2] = length((fpreal3)(h[0][2], h[1][2], h[2][2]));
+
+    // Wipe everything else
+    h[0][1] = h[0][2] = h[1][0] = h[1][2] = h[2][0] = h[2][1] = 0.0f;
+}
+
+// From https://github.com/savant117/avbd-demo2d/blob/main/source/solver.cpp#L205
+static void dualUpdateAVBD(
+    global fpreal *_bound_lambda,
+    global fpreal *_bound_penalty,
+    global int *_bound_broken,
+    global fpreal *_bound_breakthreshold,
+    const int used_rows,
+    const int prim_id,
+    const fpreal stiffness,
+    const fpreal3 lambda,
+    const fpreal3 penalty,
+    const fpreal3 C,
+    const fpreal3 fmin,
+    const fpreal3 fmax,
+    const fpreal beta,
+    const fpreal PENALTY_MAX)
+{
+    fpreal3 out_lambda, out_penalty;
+    for (int i = 0; i < used_rows; ++i)
+    {
+        // Use lambda as 0 if it's not a hard constraint
+        fpreal tmp_lambda = isinf(stiffness) ? lambda[i] : 0.0f;
+        
+        // Update lambda (Eq 11)
+        tmp_lambda = out_lambda[i] = clamp(penalty[i] * C[i] + tmp_lambda, fmin[i], fmax[i]);
+        
+        // Remove the constraint if it exceeds the fracture threshold
+        const fpreal breakthreshold = _bound_breakthreshold[prim_id];
+        if (breakthreshold >= 0.0f && fabs(tmp_lambda) >= breakthreshold)
+        {
+            _bound_broken[prim_id] = 1;
+        }
+        
+        // Update the penalty parameter and clamp to material stiffness if we are within the force bounds (Eq. 16)
+        if (tmp_lambda > fmin[i] && tmp_lambda < fmax[i])
+        {
+            // Assumes the stiffness has already been scaled by STIFFNESS_SCALE
+            out_penalty[i] = min(penalty[i] + beta * fabs(C[i]), min(PENALTY_MAX, stiffness));
+        }
+    }
+    vstore3(out_lambda, prim_id, _bound_lambda);
+    vstore3(out_penalty, prim_id, _bound_penalty);
+}
+
+// From https://github.com/savant117/avbd-demo2d/blob/main/source/solver.cpp#L179
+static void accumulateAVBD_Spring(
+    fpreal3 *force,
+    mat3 hessian,
+    const fpreal3 J, // Jacobian (1st derivative)
+    mat3 H, // Hessian (2nd derivative)
+    const fpreal C,
+    const fpreal stiffness,
+    const fpreal lambda,
+    const fpreal penalty,
+    const fpreal fmin,
+    const fpreal fmax)
+{
+    // Use lambda as 0 if it's not a hard constraint
+    const fpreal tmp_lambda = isinf(stiffness) ? lambda : 0.0f;
+
+    // Compute the clamped force magnitude (Sec 3.2)
+    const fpreal f = clamp(penalty * C + tmp_lambda, fmin, fmax);
+
+    // Compute the diagonally lumped geometric stiffness term (Sec 3.5)
+    spdApproximation(H);
+
+    mat3 G;
+    mat3scale(G, H, fabs(f));
+    outerprod3(J, J * penalty, H);
+    mat3add(H, G, H);
+
+    // Accumulate force (Eq. 13) and hessian (Eq. 17)
+    *force -= J * f;
+    mat3add(hessian, H, hessian);
+}
+
+// From https://github.com/savant117/avbd-demo2d/blob/main/source/spring.cpp#L22
+static int computeConstraint_SpringAVBD(
+    int *pt0,
+    fpreal3 *d,
+    fpreal *dlen,
+    fpreal *C,
+    const int prim_id,
+    global int *_bound_primpoints,
+    global int *_bound_primpoints_index,
+    const int _bound_primpoints_length,
+    global fpreal *_bound_P,
+    global fpreal *_bound_restlength)
+{
+    *pt0 = compAt(_bound_primpoints, prim_id, 0);
+    const int pt1 = compAt(_bound_primpoints, prim_id, 1);
+
+    const fpreal3 p0 = vload3(*pt0, _bound_P);
+    const fpreal3 p1 = vload3(pt1, _bound_P);
+    
+    const fpreal restlength = _bound_restlength[prim_id];
+
+    *d = p0 - p1;
+    const fpreal dlen2 = dot(*d, *d);
+    if (dlen2 == 0.0f) return 0;
+    *dlen = sqrt(dlen2);
+    
+    // C is the constraint error
+    *C = *dlen - restlength;
+
+    return 1;
+}
+
+// Energy for spring constraints from AVBD
+// Should really be merged with the VBD mass-spring constraints
+static void accumulateMaterialForceAndHessian_SpringAVBD(
+    fpreal3 *force,
+    mat3 hessian,
+    const int idx,
+    const int prim_id,
+    global int *_bound_primpoints,
+    global int *_bound_primpoints_index,
+    const int _bound_primpoints_length,
+    global fpreal *_bound_P,
+    global fpreal* _bound_stiffness,
+    global fpreal *_bound_restlength,
+    global fpreal *_bound_lambda,
+    global fpreal *_bound_penalty,
+    global fpreal *_bound_fmin,
+    global fpreal *_bound_fmax)
+{
+    int pt0;
+    fpreal3 d;
+    fpreal dlen, C;
+    if (!computeConstraint_SpringAVBD(&pt0, &d, &dlen, &C,
+        prim_id, _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+        _bound_P, _bound_restlength)) return;
+    
+    const fpreal3 n = d / dlen;
+
+    // This hessian isn't rotated like in avbd-2d, because @orient isn't supported yet
+    mat3 H = {
+        ((fpreal3)(1.0f, 0.0f, 0.0f) - (n * n.x)) / dlen,
+        ((fpreal3)(0.0f, 1.0f, 0.0f) - (n * n.y)) / dlen,
+        ((fpreal3)(0.0f, 0.0f, 1.0f) - (n * n.z)) / dlen
+    };
+    // AVBD also uses a jacobian (1st derivative)
+    // VBD constraints should probably be updated to use a jacobian too
+    const fpreal3 J = pt0 == idx ? n : -n;
+    
+    const fpreal stiffness = _bound_stiffness[prim_id] * STIFFNESS_SCALE;
+    LOAD_AVBD_ATTRIBS(prim_id);
+    
+    accumulateAVBD_Spring(force, hessian, J, H, C, stiffness, lambda.x, penalty.x, fmin.x, fmax.x);
+}
+
+static void dualUpdate_SpringAVBD(
+    const int prim_id,
+    global int *_bound_primpoints,
+    global int *_bound_primpoints_index,
+    const int _bound_primpoints_length,
+    global fpreal *_bound_P,
+    global fpreal* _bound_stiffness,
+    global fpreal *_bound_restlength,
+    global fpreal *_bound_lambda,
+    global fpreal *_bound_penalty,
+    global fpreal *_bound_fmin,
+    global fpreal *_bound_fmax,
+    global int *_bound_broken,
+    global fpreal *_bound_breakthreshold,
+    const fpreal beta,
+    const fpreal PENALTY_MAX)
+{
+    int pt0;
+    fpreal3 d;
+    fpreal dlen, C;
+    if (!computeConstraint_SpringAVBD(&pt0, &d, &dlen, &C,
+        prim_id, _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+        _bound_P, _bound_restlength)) return;
+    
+    const fpreal stiffness = _bound_stiffness[prim_id] * STIFFNESS_SCALE;
+    LOAD_AVBD_ATTRIBS(prim_id);
+
+    dualUpdateAVBD(_bound_lambda, _bound_penalty, _bound_broken, _bound_breakthreshold, 1,
+        prim_id, stiffness, lambda, penalty, C, fmin, fmax, beta, PENALTY_MAX);
+}
+
+// From https://github.com/savant117/avbd-demo2d/blob/main/source/solver.cpp#L179
+// Simplified for joints, which have an empty hessian
+static void accumulateAVBD_Joint(
+    fpreal3 *force,
+    mat3 hessian,
+    const mat3 J, // Jacobian (1st derivative)
+    const fpreal3 C,
+    const fpreal stiffness,
+    const fpreal3 lambda,
+    const fpreal3 penalty,
+    const fpreal3 fmin,
+    const fpreal3 fmax)
+{
+    for (int i = 0; i < 3; ++i)
+    {
+        // Use lambda as 0 if it's not a hard constraint
+        const fpreal tmp_lambda = isinf(stiffness) ? lambda[i] : 0.0f;
+
+        // Compute the clamped force magnitude (Sec 3.2)
+        const fpreal f = clamp(penalty[i] * C[i] + tmp_lambda, fmin[i], fmax[i]);
+        
+        // Since the hessian is empty, we only need the jacobian here
+        mat3 H;
+        outerprod3(J[i], J[i] * penalty[i], H);
+
+        // Accumulate force (Eq. 13) and hessian (Eq. 17)
+        *force -= J[i] * f;
+        mat3add(hessian, H, hessian);
+    }
+}
+
+// From https://github.com/savant117/avbd-demo2d/blob/main/source/joint.cpp#L36
+static void computeConstraint_JointAVBD(
+    int *pt0,
+    fpreal3 *C,
+    fpreal *stiffness,
+    const int prim_id,
+    global int *_bound_primpoints,
+    global int *_bound_primpoints_index,
+    const int _bound_primpoints_length,
+    global fpreal *_bound_P,
+    global fpreal *_bound_C,
+    global fpreal *_bound_stiffness,
+    const fpreal alpha)
+{
+    *pt0 = compAt(_bound_primpoints, prim_id, 0);
+    const int pt1 = compAt(_bound_primpoints, prim_id, 1);
+
+    const fpreal3 p0 = vload3(*pt0, _bound_P);
+    const fpreal3 p1 = vload3(pt1, _bound_P);
+    
+    // C0 is the difference in position (p0 - p1), computed during the dual update
+    const fpreal3 C0 = vload3(prim_id, _bound_C);
+    
+    // C is the constraint error
+    *C = p0 - p1;
+    
+    // Store stabilized constraint function, if a hard constraint (Eq. 18)
+    // Note stiffness is 3D for each dimension in avbd-2d, here it's 1D
+    *stiffness = _bound_stiffness[prim_id] * STIFFNESS_SCALE;
+    if (isinf(*stiffness))
+    {
+        *C -= C0 * alpha;
+    }
+}
+
+// Energy for joint constraints from AVBD
+static void accumulateMaterialForceAndHessian_JointAVBD(
+    fpreal3 *force,
+    mat3 hessian,
+    const int idx,
+    const int prim_id,
+    global int *_bound_primpoints,
+    global int *_bound_primpoints_index,
+    const int _bound_primpoints_length,
+    global fpreal *_bound_P,
+    global fpreal* _bound_stiffness,
+    global fpreal* _bound_C,
+    global fpreal *_bound_lambda,
+    global fpreal *_bound_penalty,
+    global fpreal *_bound_fmin,
+    global fpreal *_bound_fmax,
+    const fpreal alpha)
+{
+    int pt0;
+    fpreal3 C;
+    fpreal stiffness;
+    computeConstraint_JointAVBD(&pt0, &C, &stiffness,
+        prim_id, _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+        _bound_P, _bound_C, _bound_stiffness, alpha);
+    
+    // Joints only use a jacobian (1st derivative)
+    // This isn't rotated like in avbd-2d, because @orient isn't supported yet
+    mat3 J;
+    mat3identity(J);
+    if (pt0 != idx)
+    {
+        mat3scale(J, J, -1);
+    }
+    
+    LOAD_AVBD_ATTRIBS(prim_id);
+    accumulateAVBD_Joint(force, hessian, J, C, stiffness, lambda, penalty, fmin, fmax);
+}
+
+static void dualUpdate_JointAVBD(
+    const int prim_id,
+    global int *_bound_primpoints,
+    global int *_bound_primpoints_index,
+    const int _bound_primpoints_length,
+    global fpreal *_bound_P,
+    global fpreal* _bound_stiffness,
+    global fpreal *_bound_C,
+    global fpreal *_bound_lambda,
+    global fpreal *_bound_penalty,
+    global fpreal *_bound_fmin,
+    global fpreal *_bound_fmax,
+    global int *_bound_broken,
+    global fpreal *_bound_breakthreshold,
+    const fpreal alpha,
+    const fpreal beta,
+    const fpreal PENALTY_MAX)
+{
+    int pt0;
+    fpreal3 C;
+    fpreal stiffness;
+    computeConstraint_JointAVBD(&pt0, &C, &stiffness,
+        prim_id, _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+        _bound_P, _bound_C, _bound_stiffness, alpha);
+    
+    LOAD_AVBD_ATTRIBS(prim_id);
+    
+    dualUpdateAVBD(_bound_lambda, _bound_penalty, _bound_broken, _bound_breakthreshold, 3,
+        prim_id, stiffness, lambda, penalty, C, fmin, fmax, beta, PENALTY_MAX);
+}
+
+// Energy for mass-spring constraints, based on their restlength like XPBD
+// From https://github.com/AnkaChan/TinyVBD/blob/main/main.cpp#L381
+static void accumulateMaterialForceAndHessian_MassSpring(
+    fpreal3 *force,
+    mat3 hessian,
+    const int idx,
+    const int prim_id,
+    global int *_bound_primpoints,
+    global int *_bound_primpoints_index,
+    const int _bound_primpoints_length,
+    global fpreal *_bound_P,
+    global fpreal* _bound_stiffness,
+    global fpreal *_bound_restlength,
+    global int *_bound_broken,
+    global fpreal *_bound_breakthreshold)
+{
+    // Get the edge's first 2 points, assuming one point is us
+    const int pt0 = compAt(_bound_primpoints, prim_id, 0);
+    const int pt1 = compAt(_bound_primpoints, prim_id, 1);
+
+    const fpreal3 p0 = vload3(pt0, _bound_P);
+    const fpreal3 p1 = vload3(pt1, _bound_P);
+    
+    const fpreal restlength = _bound_restlength[prim_id];
+    const fpreal stiffness = _bound_stiffness[prim_id] * STIFFNESS_SCALE;
+
+    const fpreal3 d = p0 - p1;
+    const fpreal dlen2 = dot(d, d);
+    if (dlen2 == 0.0f) return;
+    
+    const fpreal dlen = sqrt(dlen2);
+    const fpreal l_ratio = restlength / dlen;
+    
+    // Mass-spring hessian from TinyVBD
+    const fpreal3 x_ident = (fpreal3)(1.0f, 0.0f, 0.0f);
+    const fpreal3 y_ident = (fpreal3)(0.0f, 1.0f, 0.0f);
+    const fpreal3 z_ident = (fpreal3)(0.0f, 0.0f, 1.0f);
+    mat3 ms_hessian = {
+        stiffness * (x_ident - l_ratio * (x_ident - (d * d.x) / dlen2)),
+        stiffness * (y_ident - l_ratio * (y_ident - (d * d.y) / dlen2)),
+        stiffness * (z_ident - l_ratio * (z_ident - (d * d.z) / dlen2))
+    };
+    
+    // SPD approximation from AVBD greatly improves mass-spring
+    spdApproximation(ms_hessian);
+    
+    mat3add(hessian, ms_hessian, hessian);
+    
+    // Mass-spring force gradient from TinyVBD
+    const fpreal stretch = (dlen - restlength) / dlen;
+    *force -= stiffness * stretch * d * (pt0 == idx ? 1 : -1);
+    
+    // Remove the constraint if it exceeds the fracture threshold
+    const fpreal breakthreshold = _bound_breakthreshold[prim_id];
+    if (breakthreshold >= 0.0f && fabs(stretch) > breakthreshold)
+    {
+        _bound_broken[prim_id] = 1;
+    }
+}
+
+// For neo-hookean constraints, turn the 9x9 deformation gradient into a 3x3 hessian
+// From https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBD_NeoHookean.cpp#L126
+static void assembleForceAndHessian_NeoHookean(
+    const fpreal9 dE_dF,
+    const mat9 d2E_dF,
+    const fpreal m1,
+    const fpreal m2,
+    const fpreal m3,
+    fpreal3 *force,
+    mat3 hessian)
+{
+    force->x -= dE_dF[0] * m1 + dE_dF[3] * m2 + dE_dF[6] * m3;
+    force->y -= dE_dF[1] * m1 + dE_dF[4] * m2 + dE_dF[7] * m3;
+    force->z -= dE_dF[2] * m1 + dE_dF[5] * m2 + dE_dF[8] * m3;
+
+    const fpreal m1sq = m1 * m1;
+    const fpreal m2sq = m2 * m2;
+    const fpreal m3sq = m3 * m3;
+    const fpreal m1m2 = m1 * m2;
+    const fpreal m1m3 = m1 * m3;
+    const fpreal m2m3 = m2 * m3;
+
+    for (int row = 0; row < 3; ++row)
+    {
+        const fpreal* row0 = d2E_dF[row];
+        const fpreal* row3 = d2E_dF[row + 3];
+        const fpreal* row6 = d2E_dF[row + 6];
+
+        hessian[row][0] = row0[0] * m1sq + row0[3] * m1m2 + row0[6] * m1m3 +
+                          row3[0] * m1m2 + row3[3] * m2sq + row3[6] * m2m3 +
+                          row6[0] * m1m3 + row6[3] * m2m3 + row6[6] * m3sq;
+        hessian[row][1] = row0[1] * m1sq + row0[4] * m1m2 + row0[7] * m1m3 +
+                          row3[1] * m1m2 + row3[4] * m2sq + row3[7] * m2m3 +
+                          row6[1] * m1m3 + row6[4] * m2m3 + row6[7] * m3sq;
+        hessian[row][2] = row0[2] * m1sq + row0[5] * m1m2 + row0[8] * m1m3 +
+                          row3[2] * m1m2 + row3[5] * m2sq + row3[8] * m2m3 +
+                          row6[2] * m1m3 + row6[5] * m2m3 + row6[8] * m3sq;
+    }
+}
+
+// Energy for neo-hookean constraints, based on each tet's volume deformation
+// From https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBD_NeoHookean.cpp#L379
+static void accumulateMaterialForceAndHessian_NeoHookean(
+    fpreal3 *force,
+    mat3 hessian,
+    const int idx,
+    const int prim_id,
+    global int *_bound_primpoints,
+    global int *_bound_primpoints_index,
+    int _bound_primpoints_length,
+    global fpreal *_bound_P,
+    global fpreal *_bound_pprevious,
+    global fpreal *_bound_restlength,
+    global fpreal *_bound_restmatrix,
+    global fpreal *_bound_stiffness,
+    global fpreal *_bound_bendstiffness,
+    global fpreal *_bound_dampingratio,
+    global fpreal *_bound_benddampingratio,
+    const fpreal timeinc,
+    const fpreal3 displacement)
+{
+    // Hydrostatic energy stiffness (volume stiffness)
+    const fpreal lmbd = _bound_stiffness[prim_id] * STIFFNESS_SCALE;
+    const fpreal lmbd_damping = _bound_dampingratio[prim_id] * DAMPING_SCALE;
+    
+    // Deviatoric energy stiffness (shear stiffness)
+    const fpreal miu = _bound_bendstiffness[prim_id] * STIFFNESS_SCALE;
+    const fpreal miu_damping = _bound_benddampingratio[prim_id] * DAMPING_SCALE;
+    
+    const fpreal a = 1.0f + miu / lmbd;
+
+    const int pt0 = compAt(_bound_primpoints, prim_id, 0);
+    const int pt1 = compAt(_bound_primpoints, prim_id, 1);
+    const int pt2 = compAt(_bound_primpoints, prim_id, 2);
+    const int pt3 = compAt(_bound_primpoints, prim_id, 3);
+    
+    const fpreal3 p0 = vload3(pt0, _bound_P);
+    const fpreal3 p1 = vload3(pt1, _bound_P);
+    const fpreal3 p2 = vload3(pt2, _bound_P);
+    const fpreal3 p3 = vload3(pt3, _bound_P);
+
+    // Ds = current tet deform
+    // Reordered to match Vellum (originally p1 - p0, p2 - p0, p3 - p0)
+    mat3 Ds;
+    mat3fromcols(p0 - p3, p1 - p3, p2 - p3, Ds);
+    
+    // Dminv = tet rest deform inverse
+    mat3 Dminv;
+    mat3load(prim_id, _bound_restmatrix, Dminv);
+    
+    // F = Ds * Dm^-1 (force for tet)
+    mat3 F;
+    mat3mul(Ds, Dminv, F);
+    
+    // This is the wrong order (col major) but only works this way
+    const fpreal3 F1 = F[0];
+    const fpreal3 F2 = F[1];
+    const fpreal3 F3 = F[2];
+
+    const fpreal3 c0 = cross(F2, F3);
+    const fpreal3 c1 = cross(F3, F1);
+    const fpreal3 c2 = cross(F1, F2);
+
+    const fpreal9 ddetF_dF = {
+        c0.x, c1.x, c2.x,
+        c0.y, c1.y, c2.y,
+        c0.z, c1.z, c2.z
+    };
+
+    const fpreal k = det3(F) - a;
+    const fpreal restVolume = _bound_restlength[prim_id];
+    const fpreal scale_lmbd = restVolume * lmbd;
+    const fpreal scale_k = restVolume * k;
+    const fpreal scale_miu = restVolume * miu;
+    
+    // Tets need a 9x9 hessian (second derivative of energy w.r.t the deformation gradient)
+    // Vellum only uses a few cross products per tet, so this is much slower
+    mat9 d2E_dF_dF;
+    
+    // Diagonal parts
+    d2E_dF_dF[0][0] = scale_lmbd * (ddetF_dF[0] * ddetF_dF[0]) + scale_miu;
+    d2E_dF_dF[1][1] = scale_lmbd * (ddetF_dF[1] * ddetF_dF[1]) + scale_miu;
+    d2E_dF_dF[2][2] = scale_lmbd * (ddetF_dF[2] * ddetF_dF[2]) + scale_miu;
+    d2E_dF_dF[3][3] = scale_lmbd * (ddetF_dF[3] * ddetF_dF[3]) + scale_miu;
+    d2E_dF_dF[4][4] = scale_lmbd * (ddetF_dF[4] * ddetF_dF[4]) + scale_miu;
+    d2E_dF_dF[5][5] = scale_lmbd * (ddetF_dF[5] * ddetF_dF[5]) + scale_miu;
+    d2E_dF_dF[6][6] = scale_lmbd * (ddetF_dF[6] * ddetF_dF[6]) + scale_miu;
+    d2E_dF_dF[7][7] = scale_lmbd * (ddetF_dF[7] * ddetF_dF[7]) + scale_miu;
+    d2E_dF_dF[8][8] = scale_lmbd * (ddetF_dF[8] * ddetF_dF[8]) + scale_miu;
+    
+    // Symmetric parts, inlined for speed
+    d2E_dF_dF[1][0] = scale_lmbd * (ddetF_dF[0] * ddetF_dF[1]);
+    d2E_dF_dF[0][1] = d2E_dF_dF[1][0];
+    
+    d2E_dF_dF[2][0] = scale_lmbd * (ddetF_dF[0] * ddetF_dF[2]);
+    d2E_dF_dF[0][2] = d2E_dF_dF[2][0];
+    
+    d2E_dF_dF[3][0] = scale_lmbd * (ddetF_dF[0] * ddetF_dF[3]);
+    d2E_dF_dF[0][3] = d2E_dF_dF[3][0];
+    
+    d2E_dF_dF[4][0] = scale_lmbd * (ddetF_dF[0] * ddetF_dF[4]) + scale_k * F3.z;
+    d2E_dF_dF[0][4] = d2E_dF_dF[4][0];
+    
+    d2E_dF_dF[5][0] = scale_lmbd * (ddetF_dF[0] * ddetF_dF[5]) + scale_k * -F2.z;
+    d2E_dF_dF[0][5] = d2E_dF_dF[5][0];
+    
+    d2E_dF_dF[6][0] = scale_lmbd * (ddetF_dF[0] * ddetF_dF[6]);
+    d2E_dF_dF[0][6] = d2E_dF_dF[6][0];
+    
+    d2E_dF_dF[7][0] = scale_lmbd * (ddetF_dF[0] * ddetF_dF[7]) + scale_k * -F3.y;
+    d2E_dF_dF[0][7] = d2E_dF_dF[7][0];
+    
+    d2E_dF_dF[8][0] = scale_lmbd * (ddetF_dF[0] * ddetF_dF[8]) + scale_k * F2.y;
+    d2E_dF_dF[0][8] = d2E_dF_dF[8][0];
+    
+    d2E_dF_dF[2][1] = scale_lmbd * (ddetF_dF[1] * ddetF_dF[2]);
+    d2E_dF_dF[1][2] = d2E_dF_dF[2][1];
+    
+    d2E_dF_dF[3][1] = scale_lmbd * (ddetF_dF[1] * ddetF_dF[3]) + scale_k * -F3.z;
+    d2E_dF_dF[1][3] = d2E_dF_dF[3][1];
+    
+    d2E_dF_dF[4][1] = scale_lmbd * (ddetF_dF[1] * ddetF_dF[4]);
+    d2E_dF_dF[1][4] = d2E_dF_dF[4][1];
+    
+    d2E_dF_dF[5][1] = scale_lmbd * (ddetF_dF[1] * ddetF_dF[5]) + scale_k * F1.z;
+    d2E_dF_dF[1][5] = d2E_dF_dF[5][1];
+    
+    d2E_dF_dF[6][1] = scale_lmbd * (ddetF_dF[1] * ddetF_dF[6]) + scale_k * F3.y;
+    d2E_dF_dF[1][6] = d2E_dF_dF[6][1];
+    
+    d2E_dF_dF[7][1] = scale_lmbd * (ddetF_dF[1] * ddetF_dF[7]);
+    d2E_dF_dF[1][7] = d2E_dF_dF[7][1];
+    
+    d2E_dF_dF[8][1] = scale_lmbd * (ddetF_dF[1] * ddetF_dF[8]) + scale_k * -F1.y;
+    d2E_dF_dF[1][8] = d2E_dF_dF[8][1];
+    
+    d2E_dF_dF[3][2] = scale_lmbd * (ddetF_dF[2] * ddetF_dF[3]) + scale_k * F2.z;
+    d2E_dF_dF[2][3] = d2E_dF_dF[3][2];
+    
+    d2E_dF_dF[4][2] = scale_lmbd * (ddetF_dF[2] * ddetF_dF[4]) + scale_k * -F1.z;
+    d2E_dF_dF[2][4] = d2E_dF_dF[4][2];
+    
+    d2E_dF_dF[5][2] = scale_lmbd * (ddetF_dF[2] * ddetF_dF[5]);
+    d2E_dF_dF[2][5] = d2E_dF_dF[5][2];
+    
+    d2E_dF_dF[6][2] = scale_lmbd * (ddetF_dF[2] * ddetF_dF[6]) + scale_k * -F2.y;
+    d2E_dF_dF[2][6] = d2E_dF_dF[6][2];
+    
+    d2E_dF_dF[7][2] = scale_lmbd * (ddetF_dF[2] * ddetF_dF[7]) + scale_k * F1.y;
+    d2E_dF_dF[2][7] = d2E_dF_dF[7][2];
+    
+    d2E_dF_dF[8][2] = scale_lmbd * (ddetF_dF[2] * ddetF_dF[8]);
+    d2E_dF_dF[2][8] = d2E_dF_dF[8][2];
+    
+    d2E_dF_dF[4][3] = scale_lmbd * (ddetF_dF[3] * ddetF_dF[4]);
+    d2E_dF_dF[3][4] = d2E_dF_dF[4][3];
+    
+    d2E_dF_dF[5][3] = scale_lmbd * (ddetF_dF[3] * ddetF_dF[5]);
+    d2E_dF_dF[3][5] = d2E_dF_dF[5][3];
+    
+    d2E_dF_dF[6][3] = scale_lmbd * (ddetF_dF[3] * ddetF_dF[6]);
+    d2E_dF_dF[3][6] = d2E_dF_dF[6][3];
+    
+    d2E_dF_dF[7][3] = scale_lmbd * (ddetF_dF[3] * ddetF_dF[7]) + scale_k * F3.x;
+    d2E_dF_dF[3][7] = d2E_dF_dF[7][3];
+    
+    d2E_dF_dF[8][3] = scale_lmbd * (ddetF_dF[3] * ddetF_dF[8]) + scale_k * -F2.x;
+    d2E_dF_dF[3][8] = d2E_dF_dF[8][3];
+    
+    d2E_dF_dF[5][4] = scale_lmbd * (ddetF_dF[4] * ddetF_dF[5]);
+    d2E_dF_dF[4][5] = d2E_dF_dF[5][4];
+    
+    d2E_dF_dF[6][4] = scale_lmbd * (ddetF_dF[4] * ddetF_dF[6]) + scale_k * -F3.x;
+    d2E_dF_dF[4][6] = d2E_dF_dF[6][4];
+    
+    d2E_dF_dF[7][4] = scale_lmbd * (ddetF_dF[4] * ddetF_dF[7]);
+    d2E_dF_dF[4][7] = d2E_dF_dF[7][4];
+    
+    d2E_dF_dF[8][4] = scale_lmbd * (ddetF_dF[4] * ddetF_dF[8]) + scale_k * F1.x;
+    d2E_dF_dF[4][8] = d2E_dF_dF[8][4];
+    
+    d2E_dF_dF[6][5] = scale_lmbd * (ddetF_dF[5] * ddetF_dF[6]) + scale_k * F2.x;
+    d2E_dF_dF[5][6] = d2E_dF_dF[6][5];
+    
+    d2E_dF_dF[7][5] = scale_lmbd * (ddetF_dF[5] * ddetF_dF[7]) + scale_k * -F1.x;
+    d2E_dF_dF[5][7] = d2E_dF_dF[7][5];
+    
+    d2E_dF_dF[8][5] = scale_lmbd * (ddetF_dF[5] * ddetF_dF[8]);
+    d2E_dF_dF[5][8] = d2E_dF_dF[8][5];
+    
+    d2E_dF_dF[7][6] = scale_lmbd * (ddetF_dF[6] * ddetF_dF[7]);
+    d2E_dF_dF[6][7] = d2E_dF_dF[7][6];
+    
+    d2E_dF_dF[8][6] = scale_lmbd * (ddetF_dF[6] * ddetF_dF[8]);
+    d2E_dF_dF[6][8] = d2E_dF_dF[8][6];
+    
+    d2E_dF_dF[8][7] = scale_lmbd * (ddetF_dF[7] * ddetF_dF[8]);
+    d2E_dF_dF[7][8] = d2E_dF_dF[8][7];
+
+    fpreal9 dE_dF;
+    for (int row = 0; row < 3; ++row)
+    {
+        for (int col = 0; col < 3; ++col)
+        {
+            // i is likely wrong too (col major), but it only works this way
+            const int i = col * 3 + row;
+            dE_dF[i] = restVolume * (F[row][col] * miu + ddetF_dF[i] * lmbd * k);
+        }
+    }
+
+    // Reordered to match Vellum (originally p1 - p0, p2 - p0, p3 - p0)
+    // The deformation direction depends on which point we are, but the forces stay the same
+    fpreal m1, m2, m3;
+    if (pt0 == idx)
+    {
+        m1 = Dminv[0][0];
+        m2 = Dminv[0][1];
+        m3 = Dminv[0][2];
+    }
+    else if (pt1 == idx)
+    {
+        m1 = Dminv[1][0];
+        m2 = Dminv[1][1];
+        m3 = Dminv[1][2];
+    } 
+    else if (pt2 == idx)
+    {
+        m1 = Dminv[2][0];
+        m2 = Dminv[2][1];
+        m3 = Dminv[2][2];
+    }
+    else
+    {
+        m1 = -Dminv[0][0] - Dminv[1][0] - Dminv[2][0];
+        m2 = -Dminv[0][1] - Dminv[1][1] - Dminv[2][1];
+        m3 = -Dminv[0][2] - Dminv[1][2] - Dminv[2][2];
+    }
+
+    // Store the hessian here for damping
+    mat3 d2E_dxi_dxi;
+    assembleForceAndHessian_NeoHookean(dE_dF, d2E_dF_dF, m1, m2, m3, force, d2E_dxi_dxi);
+
+#if has_otis
+    // Use the hessian approximation from Otis, I can't be bothered rewriting this
+    projectToSPD(d2E_dxi_dxi);
+#else
+    // Use the hessian approximation from AVBD, less stable
+    spdApproximation(d2E_dxi_dxi);
+#endif
+
+    // Damping doesn't work well, but there's a few definitions for it in GAIA
+    // This one is from https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBDPhysicsCompute.cu#L2198
+    if (lmbd_damping > 0.0f || miu_damping > 0.0f)
+    {
+        mat3 dampingH;
+        mat3scale(dampingH, d2E_dxi_dxi, lmbd_damping);
+        fpreal tmp = (m1 * m1 + m2 * m2 + m3 * m3) * miu * restVolume;
+        _mat3adddiag(d2E_dxi_dxi, d2E_dxi_dxi, tmp);
+        tmp *= miu_damping;
+        
+        _mat3adddiag(dampingH, dampingH, tmp);
+        mat3scale(dampingH, dampingH, 1.0f / timeinc);
+
+        *force -= mat3vecmul(dampingH, displacement);
+        mat3add(d2E_dxi_dxi, dampingH, d2E_dxi_dxi);
+    }
+    
+    mat3add(hessian, d2E_dxi_dxi, hessian);
+}
+
+// From https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBDPhysics.cpp#L2786
+// Doesn't work well and tends to dampen gravity, but makes cool patterns in Vellum 2nd order mode
+static void accumulateDampingForceAndHessian(
+    fpreal3 *force,
+    mat3 hessian,
+    const fpreal3 velocity,
+    const fpreal timeinc,
+    const mat3 K,
+    const fpreal gamma)
+{
+    const fpreal3 damping_force = -gamma * mat3vecmul(K, velocity);
+    mat3 damping_hessian;
+    mat3scale(damping_hessian, K, gamma / timeinc);
+    
+    *force += damping_force;
+    mat3add(hessian, damping_hessian, hessian);
+}
+
+// Energy from friction, used for all types of collisions in GAIA
+// From https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBD_GeneralCompute.h#L10
+// Based on https://github.com/ipc-sim/ipc-toolkit/blob/main/src/ipc/friction/smooth_friction_mollifier.cpp
+static void accumulateVertexFriction(
+    const fpreal mu,
+    const fpreal lambda,
+    const mat32 T,
+    const fpreal2 u,
+    const fpreal epsU,
+    fpreal3 *force,
+    mat3 hessian)
+{
+    const fpreal uNorm = length(u);
+    if (uNorm <= 0.0f) return;
+    
+    // IPC friction
+    const fpreal f1_SF_over_x = uNorm > epsU ? 1.0f / uNorm : (-uNorm / epsU + 2.0f) / epsU;
+    const fpreal mu_lambda_eps = mu * lambda * f1_SF_over_x;
+    *force -= mu_lambda_eps * _mat32vecmul(T, u);
+    
+    // Compute T * (f1_SF_over_x * mat2ident()) * transpose(T)
+    // This results in some nice cancellations
+    for (int row = 0; row < 3; ++row)
+    {
+        for (int col = 0; col < 3; ++col)
+        {
+            for (int i = 0; i < 2; ++i)
+            {
+                hessian[row][col] += T[row][i] * T[col][i] * mu_lambda_eps;
+            }
+        }
+    }
+}
+
+// Planar collisions with friction
+// From https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBD_GeneralCompute.h#L87
+// Improved by https://github.com/NVIDIA/warp/blob/main/warp/sim/integrator_vbd.py#L513
+static void accumulateBoundaryForceAndHessian(
+    fpreal3 *force,
+    mat3 hessian,
+    const fpreal3 P,
+    const fpreal3 displacement,
+    const fpreal3 ground_pos,
+    const fpreal3 ground_normal,
+    const fpreal stiffness,
+    const fpreal damping,
+    const fpreal friction,
+    const fpreal epsU,
+    const fpreal timeinc)
+{
+    const fpreal penetration_depth = -dot(ground_normal, P - ground_pos);
+    if (penetration_depth <= 0.0f) return;
+    
+    // Collisions can be overpowered by stiff constraints, causing penetration
+    // This should be improved by hard constraints from AVBD
+    const fpreal ground_force_norm = penetration_depth * stiffness;
+    *force += ground_normal * ground_force_norm;
+    
+    mat3 ground_hessian;
+    outerprod3(ground_normal, ground_normal, ground_hessian);
+    mat3scale(ground_hessian, ground_hessian, stiffness);
+    
+    // Apply damping
+    if (dot(displacement, ground_normal) < 0.0f)
+    {
+        mat3 damping_hessian;
+        mat3scale(damping_hessian, ground_hessian, damping / timeinc);
+        *force -= mat3vecmul(damping_hessian, displacement);
+        mat3sub(ground_hessian, damping_hessian, ground_hessian);
+    }
+    
+    mat3add(hessian, ground_hessian, hessian);
+    
+    // Apply friction
+    if (friction <= 0.0f) return;
+    mat32 T;
+    buildOrthonormalBasis(ground_normal, T);
+    const fpreal2 u = _mat32Tvecmul(T, displacement);
+    accumulateVertexFriction(friction, ground_force_norm, T, u, epsU * timeinc, force, hessian);
+}
+
+// Worksets are computed in graph_color for points, as required for Vertex Block Descent
+// See pbd_constraints.cl for another example, note it runs on prims instead
+// For Vellum compatibility, you need two separate worksets (one for points, one for prims)
+
+// Coloring is based on ConstraintGeometry, since ConstraintGeometry has many more connections
+// This ensures coloring respects all connections for the best possible stability
+kernel void solveConstraints(
+    int color_offset,
+    int color_length,
+    const fpreal timeinc,
+    int _bound_P_length,
+    global fpreal * restrict _bound_P,
+    int _bound_coloredidx_length,
+    global int * restrict _bound_coloredidx,
+    int _bound_inertia_length,
+    global fpreal * restrict _bound_inertia,
+    int _bound_mass_length,
+    global fpreal * restrict _bound_mass,
+#ifdef HAS_stopped
+    int _bound_stopped_length,
+    global int * restrict _bound_stopped,
+#endif
+    int _bound_pointprims_length,
+    global int * restrict _bound_pointprims_index,
+    global int * restrict _bound_pointprims,
+    int _bound_restlength_length,
+    global fpreal * restrict _bound_restlength,
+#ifdef HAS_restmatrix
+    int _bound_restmatrix_length,
+    global fpreal * restrict _bound_restmatrix,
+#endif
+    int _bound_stiffness_length,
+    global fpreal * restrict _bound_stiffness,
+#ifdef HAS_bendstiffness
+    int _bound_bendstiffness_length,
+    global fpreal * restrict _bound_bendstiffness,
+#endif
+#ifdef HAS_dampingratio
+    int _bound_dampingratio_length,
+    global fpreal * restrict _bound_dampingratio,
+#endif
+#ifdef HAS_benddampingratio
+    int _bound_benddampingratio_length,
+    global fpreal * restrict _bound_benddampingratio,
+#endif
+    int _bound_primpoints_length,
+    global int * restrict _bound_primpoints_index,
+    global int * restrict _bound_primpoints,
+#ifdef HAS_omega
+    int _bound_omega_length,
+    global fpreal * restrict _bound_omega,
+#endif
+    const fpreal accel_rho,
+#ifdef HAS_iteration
+    int iteration,
+#endif
+#ifdef HAS_plastiter
+    int _bound_plastiter_length,
+    global fpreal * restrict _bound_plastiter,
+#endif
+    const int solve_method,
+    const fpreal min_force,
+    const fpreal min_hessian,
+    const fpreal convergence,
+    int _bound_type_length,
+    global int * restrict _bound_type,
+    int _bound_pprevious_length,
+    global fpreal * restrict _bound_pprevious,
+    const fpreal damping,
+    const short use_ground,
+    const fpreal3 ground_pos,
+    const fpreal ground_stiffness,
+    const fpreal ground_friction,
+    const fpreal ground_epsilon,
+    const fpreal3 ground_normal,
+    const fpreal ground_damping,
+    int _bound_lambda_length,
+    global fpreal * restrict _bound_lambda,
+    int _bound_penalty_length,
+    global fpreal * restrict _bound_penalty,
+    int _bound_fmin_length,
+    global fpreal * restrict _bound_fmin,
+    int _bound_fmax_length,
+    global fpreal * restrict _bound_fmax,
+    int _bound_broken_length,
+    global int * restrict _bound_broken,
+    int _bound_breakthreshold_length,
+    global fpreal * restrict _bound_breakthreshold,
+    const fpreal alpha,
+    const fpreal beta,
+    const fpreal PENALTY_MAX,
+    int _bound_C_length,
+    global fpreal * restrict _bound_C,
+    int _bound_pointsupdated_length,
+    global int * restrict _bound_pointsupdated,
+    int _bound_rigid_length,
+    global int * restrict _bound_rigid)
+{
+    // Like Vellum, everything here is based on timeinc
+    if (timeinc == 0.0f) return;
+    
+    int idx = get_global_id(0);
+    if (idx >= color_length) return;
+    idx += color_offset;
+    
+    const fpreal mass = _bound_mass[idx];
+    if (mass <= 0.0f) return; // Skip pinned points
+    
+#ifdef HAS_stopped
+    // TODO: Update this once rotation is updated here too
+    const int stopped = _bound_stopped[idx];
+    if (stopped & 1) return;
+#endif
+    
+    // @coloredidx maps from Geometry to ConstraintGeometry pointprims
+    int coloredidx = _bound_coloredidx[idx];
+    if (coloredidx < 0) return;
+    
+    fpreal3 P = vload3(idx, _bound_P);
+    const fpreal3 pprevious = vload3(idx, _bound_pprevious);
+    const fpreal3 inertia = vload3(idx, _bound_inertia);
+
+#ifdef HAS_plastiter
+    const fpreal3 P_before_solve = P;
+#endif
+    
+    // Everything gets accumulated to the force gradient and hessian below
+    // The position gets solved as P += force * invert(hessian)
+
+    // For points, the forces and hessians have 3 DOF (translation only)
+    fpreal3 force_linear = (fpreal3)(0.0f);
+    mat3 hessian_linear;
+    mat3zero(hessian_linear);
+
+    // For rigid bodies, the forces and hessians have 6 DOF (translation and rotation)
+    fpreal3 force_angular = (fpreal3)(0.0f);
+    mat3 hessian_angular;
+    mat3zero(hessian_angular);
+    
+    // Include energy from inertia (includes gravity) and mass
+    accumulateInertiaForceAndHessian(&force_linear, hessian_linear, mass, P, inertia, timeinc);
+
+    // Angular inertia, for 6 DOF update
+    const int is_rigid = _bound_rigid[idx];
+    if (is_rigid)
+    {
+        accumulateInertiaForceAndHessian6DOF(&force_angular, hessian_angular);
+    }
+    
+    // Damping only affects the hessian for material forces in GAIA
+    // https://github.com/AnkaChan/Gaia/blob/main/Simulator/Modules/VBD/VBDPhysics.cpp#L2347-L2351
+    mat3 tmp_hessian;
+    if (damping > 0.0f)
+    {
+        mat3copy(hessian_linear, tmp_hessian);
+    }
+    
+    // Only dual solve when AVBD constraints are connected
+    int dual_solve = 0;
+    
+    // Accumulate energy for each constraint connected to the current point
+    // I tried hard to get this to run in parallel, but the performance was always worse :(
+    const int num_constraints = entriesAt(_bound_pointprims, coloredidx);
+    for (int constraint_id = 0; constraint_id < num_constraints; ++constraint_id)
+    {
+        const int prim_id = compAt(_bound_pointprims, coloredidx, constraint_id);
+        const int constraint_type = _bound_type[prim_id];
+        
+        switch (constraint_type)
+        {
+            case VBD_MASS_SPRING:
+            {
+                accumulateMaterialForceAndHessian_MassSpring(&force_linear, hessian_linear, idx, prim_id,
+                    _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+                    _bound_P, _bound_stiffness, _bound_restlength, _bound_broken, _bound_breakthreshold);
+                break;
+            }
+            case AVBD_SPRING:
+            {
+                accumulateMaterialForceAndHessian_SpringAVBD(&force_linear, hessian_linear, idx, prim_id,
+                    _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+                    _bound_P, _bound_stiffness, _bound_restlength, _bound_lambda, _bound_penalty,
+                    _bound_fmin, _bound_fmax);
+                // Dual solving is allowed once we've updated all points for this prim
+                const int prev = atomic_inc(&_bound_pointsupdated[prim_id]);
+                dual_solve |= num_constraints == (prev + 1);
+                break;
+            }
+            case AVBD_JOINT:
+            {
+                accumulateMaterialForceAndHessian_JointAVBD(&force_linear, hessian_linear, idx, prim_id,
+                    _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+                    _bound_P, _bound_stiffness, _bound_C, _bound_lambda, _bound_penalty, _bound_fmin,
+                    _bound_fmax, alpha);
+                // Dual solving is allowed once we've updated all points for this prim
+                const int prev = atomic_inc(&_bound_pointsupdated[prim_id]);
+                dual_solve |= num_constraints == (prev + 1);
+                break;
+            }
+#if defined(HAS_restmatrix) && defined(HAS_bendstiffness) && defined(HAS_dampingratio) && defined(HAS_benddampingratio)
+            case VBD_NEO_HOOKEAN:
+            {
+                accumulateMaterialForceAndHessian_NeoHookean(&force_linear, hessian_linear, idx, prim_id,
+                    _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+                    _bound_P, _bound_pprevious, _bound_restlength, _bound_restmatrix,
+                    _bound_stiffness, _bound_bendstiffness, _bound_dampingratio,
+                    _bound_benddampingratio, timeinc, P - pprevious);
+                break;
+            }
+#endif
+        }
+    }
+    
+    // Apply damping, doesn't work well but makes cool patterns
+    if (damping > 0.0f)
+    {
+        mat3 K;
+        mat3sub(hessian_linear, tmp_hessian, K);
+        accumulateDampingForceAndHessian(&force_linear, hessian_linear, (P - pprevious) / timeinc,
+            timeinc, K, damping * timeinc * DAMPING_SCALE);
+    }
+    
+    if (use_ground && ground_stiffness > 0.0f)
+    {
+        accumulateBoundaryForceAndHessian(
+            &force_linear, hessian_linear, P, P - pprevious, ground_pos, normalize(ground_normal),
+            ground_stiffness, ground_damping * DAMPING_SCALE, ground_friction, ground_epsilon, timeinc);
+    }
+    
+    // The core of VBD: P += force * invert(hessian)
+    // Sadly invert(hessian) is mega unstable, so we bandaid it below
+    if (dot(force_linear, force_linear) > (min_force * min_force))
+    {
+        if (solve_method == 0)
+        {
+            fpreal3 descent_direction;
+            const int success = solveDirect(force_linear, hessian_linear, &descent_direction, min_hessian);
+            if (success)
+            {
+                P += descent_direction * convergence;
+                vstore3(P, idx, _bound_P);
+            }
+        }
+        else if (fabs(det3(hessian_linear)) > min_hessian)
+        {
+            P += solveLDLT(force_linear, hessian_linear) * convergence; // Requires the hessian to be SPD
+            vstore3(P, idx, _bound_P);
+        }
+    }
+
+    // Dual solve for AVBD, faster to run it here than in a separate kernel
+    // TODO: This sometimes causes problems, split this into a separate kernel again
+    if (dual_solve)
+    {
+        for (int constraint_id = 0; constraint_id < num_constraints; ++constraint_id)
+        {
+            const int prim_id = compAt(_bound_pointprims, coloredidx, constraint_id);
+            
+            // Dual solving is only allowed once all points of the constraint are updated
+            const int points_updated = _bound_pointsupdated[prim_id];
+            if (points_updated != num_constraints) continue;
+            
+            const int constraint_type = _bound_type[prim_id];
+            switch (constraint_type)
+            {
+                case AVBD_SPRING:
+                {
+                    dualUpdate_SpringAVBD(prim_id, _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+                        _bound_P, _bound_stiffness, _bound_restlength, _bound_lambda, _bound_penalty,
+                        _bound_fmin, _bound_fmax, _bound_broken, _bound_breakthreshold, beta, PENALTY_MAX);
+                    break;
+                }
+                case AVBD_JOINT:
+                {
+                    dualUpdate_JointAVBD(prim_id, _bound_primpoints, _bound_primpoints_index, _bound_primpoints_length,
+                        _bound_P, _bound_stiffness, _bound_C, _bound_lambda, _bound_penalty,
+                        _bound_fmin, _bound_fmax, _bound_broken, _bound_breakthreshold, alpha, beta, PENALTY_MAX);
+                    break;
+                }
+            }
+        }
+    }
+    
+#if defined(HAS_omega) && defined(HAS_plastiter) && defined(HAS_iteration)
+    // Accelerated convergence, tends to explode so disabled by default
+    const fpreal omega = _getAcceleratorOmega(iteration + 1, accel_rho, _bound_omega[idx]);
+    _bound_omega[idx] = omega;
+
+    const fpreal3 plast = vload3(idx, _bound_plastiter);
+    P = plast + (P - plast) * omega;
+    vstore3(P, idx, _bound_P);
+
+    vstore3(P_before_solve, idx, _bound_plastiter);
+#endif
+}
+
+
+================================================
+FILE: ocl/updateConstraintPoints.cl
+================================================
+kernel void updateConstraintPoints(
+    int _bound_Pcon_length,
+    global fpreal * restrict _bound_Pcon,
+    int _bound_coloredidx_length,
+    global int * restrict _bound_coloredidx,
+    int _bound_P_length,
+    global fpreal * restrict _bound_P)
+{
+    const int idx = get_global_id(0);
+    if (idx >= _bound_Pcon_length) return;
+
+    // Skip non-matching points
+    const int coloredidx = _bound_coloredidx[idx];
+    if (coloredidx < 0 || coloredidx >= _bound_Pcon_length) return;
+
+    const fpreal3 P = vload3(coloredidx, _bound_P);
+    vstore3(P, coloredidx, _bound_Pcon);
+}
+
+
+================================================
+FILE: ocl/updatePins.cl
+================================================
+kernel void updatePins( 
+    int _bound_P_length,
+    global fpreal * restrict _bound_P,
+#ifdef HAS_gluetoanimation
+    int _bound_gluetoanimation_length,
+    global int * restrict _bound_gluetoanimation,
+#endif
+#ifdef HAS_pintoanimation
+    int _bound_pintoanimation_length,
+    global int * restrict _bound_pintoanimation,
+#endif
+    int _bound_id_length,
+    global int * restrict _bound_id,
+    int _bound_animP_length,
+    global fpreal * restrict _bound_animP)
+{
+    const int idx = get_global_id(0);
+    if (idx >= _bound_P_length) return;
+
+    // For now @gluetoanimation and @pintoanimation do the same thing
+    int stuck = 0;
+#ifdef HAS_gluetoanimation
+    stuck |= _bound_gluetoanimation[idx];
+#endif
+#ifdef HAS_pintoanimation
+    stuck |= _bound_pintoanimation[idx];
+#endif
+    if (!stuck) return;
+
+    // Graph Color sorts the points, so the order of the animated points mismatches
+    // @id stores the index before sorting, use it to map back to the correct point
+    // This must be done after graph coloring since @id relies on it
+    const int id = _bound_id[idx];
+    if (id >= _bound_P_length) return;
+
+    // TODO: Interpolate animated position like Otis does
+    const fpreal3 animP = vload3(id, _bound_animP);
+    vstore3(animP, idx, _bound_P);
+}
+
+
+================================================
+FILE: ocl/updateVelocity.cl
+================================================
+#include <quaternion.h>
+
+kernel void updateVelocity( 
+    fpreal timeinc,
+    int _bound_v_length,
+    global fpreal * restrict _bound_v,
+    int _bound_vprevious_length,
+    global fpreal * restrict _bound_vprevious,
+    int _bound_P_length,
+    global fpreal * restrict _bound_P,
+    int _bound_pprevious_length,
+    global fpreal * restrict _bound_pprevious,
+    int _bound_mass_length,
+    global fpreal * restrict _bound_mass,
+#ifdef HAS_stopped
+    int _bound_stopped_length,
+    global int * restrict _bound_stopped,
+#endif
+    int _bound_wprevious_length,
+    global fpreal * restrict _bound_wprevious,
+    int _bound_w_length,
+    global fpreal * restrict _bound_w,
+    int _bound_orient_length,
+    global fpreal * restrict _bound_orient,
+    int _bound_orientprevious_length,
+    global fpreal * restrict _bound_orientprevious
+)
+{
+    int idx = get_global_id(0);
+    if (idx >= _bound_v_length) return;
+
+    const fpreal mass = _bound_mass[idx];
+    if (mass <= 0.0f) return; // Skip pinned points
+    
+#ifdef HAS_stopped
+    // @stopped = 1 pins position
+    const int stopped = _bound_stopped[idx];
+    if (!(stopped & 1))
+    {
+#endif
+
+    // Vellum sets @vprevious at the start of each substep, but VBD sets it here
+    // This is not a typo, it's used for an acceleration estimate during adaptive warmstarting
+    const fpreal3 v = vload3(idx, _bound_v);
+    vstore3(v, idx, _bound_vprevious);
+    
+    // The same probably applies to rotation too (added by AVBD)
+    const fpreal3 w = vload3(idx, _bound_w);
+    vstore3(w, idx, _bound_wprevious);
+    
+    // First order velocity, same as Vellum
+    const fpreal3 P = vload3(idx, _bound_P);
+    const fpreal3 pprevious = vload3(idx, _bound_pprevious);
+    vstore3((P - pprevious) / timeinc, idx, _bound_v);
+        
+#ifdef HAS_stopped
+    }
+    // @stopped = 2 pins rotation
+    if (stopped & 2) return;
+#endif
+    
+    // First order angular from AVBD (Eq. 7)
+    // https://graphics.cs.utah.edu/research/projects/avbd/Augmented_VBD-SIGGRAPH25_RTL.pdf
+    quat orient = vload4(idx, _bound_orient);
+    const quat orientprevious = vload4(idx, _bound_orientprevious);
+    
+    // This assumes orientprevious is normalized
+    orient = qmultiply(orient, qconjugate(orientprevious));
+    vstore3((2.0f * orient.xyz) / timeinc, idx, _bound_w);
+}
+
+
+================================================
+FILE: ocl/updateVelocity_vellum.cl
+================================================
+#include <quaternion.h>
+
+kernel void updateVelocity_vellum( 
+    fpreal timeinc,
+    int _bound_v_length,
+    global fpreal * restrict _bound_v,
+    int _bound_P_length,
+    global fpreal * restrict _bound_P,
+    int _bound_pprevious_length,
+    global fpreal * restrict _bound_pprevious,
+#ifdef HAS_plast
+    int _bound_plast_length,
+    global fpreal * restrict _bound_plast,
+#endif
+    int _bound_mass_length,
+    global fpreal * restrict _bound_mass,
+#ifdef HAS_stopped
+    int _bound_stopped_length,
+    global int * restrict _bound_stopped,
+#endif
+    int _bound_w_length,
+    global fpreal * restrict _bound_w,
+    int _bound_orient_length,
+    global fpreal * restrict _bound_orient,
+#ifdef HAS_orientlast
+    int _bound_orientlast_length,
+    global fpreal * restrict _bound_orientlast,
+#endif
+    int _bound_orientprevious_length,
+    global fpreal * restrict _bound_orientprevious)
+{
+    int idx = get_global_id(0);
+    if (idx >= _bound_v_length) return;
+    
+    const fpreal mass = _bound_mass[idx];
+    if (mass <= 0.0f) return; // Skip pinned points
+
+#ifdef HAS_stopped
+    // @stopped = 1 pins position
+    const int stopped = _bound_stopped[idx];
+    if (!(stopped & 1))
+    {
+#endif
+
+    const fpreal3 P = vload3(idx, _bound_P);
+    const fpreal3 pprevious = vload3(idx, _bound_pprevious);
+    
+#ifdef HAS_plast
+    // Second order integration (BDF2)
+    const fpreal3 plast = vload3(idx, _bound_plast);
+    vstore3(((2.0f * P + (P + plast)) - 4.0f * pprevious) / (2.0f * timeinc), idx, _bound_v);
+#else
+    // First order integration
+    vstore3((P - pprevious) / timeinc, idx, _bound_v);
+#endif
+
+#ifdef HAS_stopped
+    }
+    // @stopped = 2 pins rotation
+    if (stopped & 2) return;
+#endif
+
+    quat orient = vload4(idx, _bound_orient);
+    const quat orientprevious = vload4(idx, _bound_orientprevious);
+
+#ifdef HAS_orientlast
+    // Second order integration (BDF2)
+    // This isn't actually valid for quaternions, causes some weird results
+    const quat orientlast = vload4(idx, _bound_orientlast);
+    orient = qmultiply(3.0f * orient - 4.0f * orientprevious + orientlast, qconjugate(orient));
+    vstore3(orient.xyz / timeinc, idx, _bound_w);
+#else
+    // First order integration, assumes orientprevious is normalized
+    orient = qmultiply(orient, qconjugate(orientprevious));
+    vstore3((2.0f * orient.xyz) / timeinc, idx, _bound_w);
+#endif
+}
+
+
+================================================
+FILE: vex/addRigidConstraints.c
+================================================
+int rigids[] = expandpointgroup(1, "__constraintsrc");
+
+foreach (int rigid; rigids) {
+    vector pos = point(1, "P", rigid);
+    int idx = point(1, "__idxorig", rigid);
+    string name = point(1, "name", rigid);
+    
+    int rigid_pt = -1;
+    if (idx < 0) {
+        // Rigids which were newly packed
+        rigid_pt = addpoint(0, pos);
+        setpointattrib(0, "__idxorig", rigid_pt, idx);
+    } else {
+        // Rigids which were already packed
+        rigid_pt = findattribval(0, "point", "__idxorig", idx);
+    }
+    
+    if (chi("keep_connections")) {
+        int connections[] = point(1, "__connections", rigid);
+        foreach (int pt; connections) {
+            int match = findattribval(0, "point", "__idxorig", pt);
+            if (match < 0 || match == rigid_pt) continue;
+            setpointattrib(0, "name", match, name);
+        }
+    }
+    
+    setpointgroup(0, "__constraintsrc", rigid_pt, 1);
+    setpointattrib(0, "name", rigid_pt, name);
+}
+
+
+================================================
+FILE: vex/checkRecoloring.c
+================================================
+// From Vellum, if geometry was added or removed we need to recolor
+#include "pbd_constraints.h"
+
+// Compare the current constraint topology to the topolgy when we last colored
+int curtopo[] = detail(0, "coloredtopology");
+int newtopo[] = calcConstraintTopology(0, 1);
+
+// Need to graph-color if the constraint topology has changed (or if we've never colored in the first place)
+if (!hasdetailattrib(0, "sizes_vbd") ||
+    !hasdetailattrib(0, "offsets_vbd") ||
+    !compareIntArrays(curtopo, newtopo)) {
+   adddetailattrib(geoself(), "needscoloring", 1);
+}
+
+
+================================================
+FILE: vex/createDistanceConstraints.c
+================================================
+#include "pbd_constraints.h"
+
+// To fix extra distance constraints being created incorrectly
+void createDistanceConstraintFixed(const int geo; const int ptnum; const string edgegrp; const int outgeo; const string outgrp) {
+    int nbrs[] = neighbours(geo, ptnum);
+    foreach(int n; nbrs) {
+        if (n <= ptnum || !inedgegroup(geo, edgegrp, ptnum, n)) continue;
+        int prim = addprim(outgeo, "polyline", ptnum, n);
+        setprimgroup(outgeo, outgrp, prim, 1);
+        setprimattrib(outgeo, "restlength", prim, computeDistanceRestLength(geo, ptnum, n));
+    }
+}
+
+if (nedgesgroup(1, "__constraintsrcorig") > 0) {
+    // Correct behaviour for prim and edge groups
+    createDistanceConstraintFixed(1, @ptnum, "__constraintsrcorig", geoself(), "__stretchconstraints");
+} else {
+    createDistanceConstraint(1, @ptnum, "__constraintsrc", geoself(), "__stretchconstraints");
+}
+
+
+================================================
+FILE: vex/detectRemovedPts.c
+================================================
+i@group___blast = findattribvalcount(1, "point", "__idxorig", i@ptnum) <= 0;
+
+
+================================================
+FILE: vex/forwardStep.c
+================================================
+// VEX used for debugging the OpenCL version (ocl/forwardStep.cl)
+// Slow and outdated now (rewrite of TinyVBD), but easier to read
+
+if (f@mass <= 0) return; // Skip pinned points
+
+int adaptive = chi("initialization");
+vector gravity = chv("gravity");
+
+v@pprevious = v@P;
+
+// First order integration, same as Vellum
+v@v += gravity * f@TimeInc;
+v@inertia = v@P + v@v * f@TimeInc;
+
+if (adaptive && i@has_vprevious) {
+    // Adaptive warmstart, this has bizarre issues with gravity reduction depending on mass
+    vector accel = (v@v - v@vprevious) / f@TimeInc;
+    float gravNorm = length(gravity);
+    vector gravDir = gravity / gravNorm;
+    float accelWeight = clamp(dot(accel, gravDir) / gravNorm, 0, 1);
+    v@P += v@vprevious * f@TimeInc * gravity * accelWeight * f@TimeInc * f@TimeInc;
+} else {
+    // Inertia and acceleration, much more reliable
+    v@P = v@inertia;
+}
+
+// Used for accelerated convergence
+f@omega = 1;
+
+
+================================================
+FILE: vex/groupRigids.c
+================================================
+int typeid = primintrinsic(0, "typeid", i@primnum);
+i@group_rigid = typeid == 26 || typeid == 28;
+
+
+================================================
+FILE: vex/hasOtis.c
+================================================
+// The new Otis solver in Houdini 21 also uses VBD
+// It includes some new hessian approximations I want to try out
+i@has_otis = __vex_major >= 21;
+
+
+================================================
+FILE: vex/initPointAttribs.c
+================================================
+// Defaults if not set
+vector @inertia = 0;
+vector4 @orient = {0, 0, 0, 1};
+vector @v = 0;
+vector @w = 0;
+float @omega = 1;
+
+
+================================================
+FILE: vex/initPrimAttribs.c
+================================================
+// Defaults if not set
+vector @penalty = 0;
+vector @lambda = 0;
+vector @C = 0;
+int @pointsupdated = 0;
+vector @fmin = -9e99999;
+vector @fmax = 9e99999;
+float @breakthreshold = -1;
+int @group_broken = 0;
+
+
+================================================
+FILE: vex/mapIds.c
+================================================
+i@coloredidx = idtopoint(1, i@id);
+
+
+================================================
+FILE: vex/renameConstraints.c
+================================================
+if (find({"distance", "bend", "bendtwist", "stitch", "branchstitch", "stretchshear"}, s@type) >= 0) {
+    s@type = "vbd_massspring";
+} else if (startswith(s@type, "tet")) {
+    s@type = "vbd_neohookean";
+    // Vellum doesn't have bend attributes for tetrahedrons, reuse the stretch attributes
+    setprimattrib(0, "bendstiffness", i@primnum, f@stiffness);
+    setprimattrib(0, "benddampingratio", i@primnum, f@dampingratio);
+} else if (s@type == "shapematch") {
+    // Use infinitely stiff AVBD springs for now
+    s@type = "avbd_spring";
+    f@stiffness = 1e50; // Rounds to infinity
+}
+
+
+================================================
+FILE: vex/setPointPrims.c
+================================================
+i[]@prims = pointprims(0, i@ptnum);
+
+i@coloredidx = idtopoint(1, i@id);
+
+
+================================================
+FILE: vex/setPtsTypeHash.c
+================================================
+#include <pbd_constraints.h>
+
+i[]@pts = primpoints(0, i@primnum);
+
+// Map to correct @coloredidx on Geometry
+for (int i = 0; i < len(i[]@pts); ++i) {
+    int id = point(0, "id", i[]@pts[i]);
+    if (id < 0) id = i[]@pts[i];
+    int match = idtopoint(1, id);
+    // Don't use prims with missing children
+    if (match < 0) {
+        i[]@pts = {};
+        return;
+    }
+    i[]@pts[i] = match;
+}
+
+i@type_hash = constraintHash(s@type);
+
+
+================================================
+FILE: vex/solveConstraints.c
+================================================
+// VEX used for debugging the OpenCL version (ocl/solveConstraintsVBD.cl)
+// Slow and outdated now (rewrite of TinyVBD), but easier to read
+
+if (f@mass <= 0) return; // Skip pinned points
+
+vector previterpos = v@P;
+float dtSqrReciprocal = 1.0 / (f@TimeInc * f@TimeInc);
+
+// Accumulate inertia forces
+3@h = f@mass * dtSqrReciprocal * ident();
+v@f = f@mass * (v@inertia - v@P) * dtSqrReciprocal;
+
+int constraints[] = pointprims(1, i@ptnum);
+foreach (int con; constraints) {
+    int pts[] = primpoints(1, con);
+    
+    int v1 = pts[0];
+    int v2 = pts[1];
+    vector p1 = point(0, "P", v1);
+    vector p2 = point(0, "P", v2);
+    vector diff = p1 - p2;
+    float l = length(diff);
+    float l0 = prim(1, "restlength", con);
+    
+    // Accumulate hessian and forces for each constraint (mass-spring energy)
+    float stiffness = prim(1, "stiffness", con);
+    3@h += stiffness * (ident() - (l0 / l) * (ident() - outerproduct(diff, diff) / (l * l)));
+    v@f += (stiffness * (l0 - l) / l) * diff * (v1 == i@ptnum ? 1 : -1);
+}
+
+// invert() can produce crazy results
+if (abs(determinant(3@h)) > chf("min_energy")) {
+    v@P += v@f * invert(3@h);
+}
+
+if (!chi("use_accelerator")) return;
+
+float getAcceleratorOmega(int order; float pho; float prevOmega) {
+    if (order == 1) {
+        return 1.0;
+    } else if (order == 2) {
+        return 2.0 / (2.0 - (pho * pho));
+    } else {
+        return 4.0 / (4.0 - (pho * pho) * prevOmega);
+    }
+}
+
+int iter = detail(-2, "iteration", 0);
+f@omega = getAcceleratorOmega(iter + 1, chf("acceleration_rho"), f@omega);
+
+// Apply accelerated convergence, tends to be unstable so disabled by default
+if (f@omega > 1) v@P = f@omega * (v@P - v@plast) + v@plast;
+
+v@plast = previterpos;
+
+
+================================================
+FILE: vex/storeColoredTopo.c
+================================================
+// From Vellum, changing topology must get recolored
+#include "pbd_constraints.h"
+
+i[]@coloredtopology = calcConstraintTopology(0, 1);
+
+
+================================================
+FILE: vex/transferEdgeGroups.c
+================================================
+int broken[] = expandedgegroup(1, "broken");
+for (int i = 0; i < len(broken); i += 2) {
+    int pt0 = point(1, "coloredidx", broken[i]);
+    int pt1 = point(1, "coloredidx", broken[i+1]);
+    if (pt0 < 0 || pt1 < 0) continue;
+    setedgegroup(0, "broken", pt0, pt1, 1);
+}
+
+
+================================================
+FILE: vex/updateVelocity.c
+================================================
+// VEX used for debugging the OpenCL version (ocl/updateVelocity.cl)
+// Slow and outdated now (rewrite of TinyVBD), but easier to read
+
+if (f@mass <= 0) return; // Skip pinned points
+
+// Vellum sets @vprevious at the start of each substep, but VBD sets it here
+// This is not a typo, it's used for an acceleration estimate during adaptive warmstarting
+v@vprevious = v@v;
+i@has_vprevious = 1;
+
+// First order velocity, same as Vellum
+v@v = (v@P - v@pprevious) / f@TimeInc;
+
