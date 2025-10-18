@@ -10,6 +10,6 @@ mod constraint;
 mod params;
 mod solver;
 
-pub use constraint::{AvbdConstraint, AvbdConstraintState};
+pub use constraint::{AVBD_DOF, AvbdConstraint, AvbdConstraintState};
 pub use params::AvbdSolverParams;
 pub use solver::AvbdSolver;
