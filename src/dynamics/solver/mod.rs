@@ -18,6 +18,8 @@ mod categorization;
 mod contact_constraint;
 mod interaction_groups;
 // #[cfg(not(feature = "parallel"))]
+#[cfg(feature = "solver_avbd")]
+pub mod avbd;
 mod island_solver;
 mod joint_constraint;
 // #[cfg(feature = "parallel")]
@@ -30,6 +32,9 @@ mod solver_body;
 // #[cfg(not(feature = "parallel"))]
 // #[cfg(not(feature = "parallel"))]
 mod velocity_solver;
+
+#[cfg(feature = "solver_avbd")]
+pub use self::avbd::{AvbdConstraint, AvbdConstraintState, AvbdSolver, AvbdSolverParams};
 
 // TODO: SAFETY: restrict with bytemuck::Zeroable to make this safe.
 pub unsafe fn reset_buffer<T>(buffer: &mut Vec<T>, len: usize) {

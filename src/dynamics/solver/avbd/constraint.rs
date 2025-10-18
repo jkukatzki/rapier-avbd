@@ -1,0 +1,49 @@
+use crate::dynamics::{RigidBodyHandle, RigidBodySet};
+use crate::math::Real;
+
+#[cfg(feature = "serde-serialize")]
+use serde::{Deserialize, Serialize};
+
+/// Cached dual variables and stiffness for a single AVBD constraint.
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+pub struct AvbdConstraintState {
+    /// The dual variable \(\lambda\) associated with the constraint.
+    pub lambda: Real,
+    /// The adaptive stiffness parameter used by the augmented Lagrangian update.
+    pub stiffness: Real,
+}
+
+impl AvbdConstraintState {
+    /// Creates a new constraint state initialized with the provided values.
+    pub fn new(lambda: Real, stiffness: Real) -> Self {
+        Self { lambda, stiffness }
+    }
+
+    /// Resets the state to the supplied values.
+    pub fn reset(&mut self, lambda: Real, stiffness: Real) {
+        self.lambda = lambda;
+        self.stiffness = stiffness;
+    }
+}
+
+/// Core interface that any AVBD constraint implementation must satisfy.
+pub trait AvbdConstraint {
+    /// Returns the handles of all bodies affected by this constraint.
+    fn bodies(&self) -> &[RigidBodyHandle];
+
+    /// Returns the mutable state (dual variables, stiffness) for the constraint.
+    fn state_mut(&mut self) -> &mut AvbdConstraintState;
+
+    /// Returns the immutable state for the constraint.
+    fn state(&self) -> &AvbdConstraintState;
+
+    /// Evaluates the constraint function \(C(x)\) for the current body configuration.
+    fn evaluate(&self, bodies: &RigidBodySet) -> Real;
+
+    /// Computes the gradient of the constraint with respect to the specified body.
+    fn gradient(&self, bodies: &RigidBodySet, body: RigidBodyHandle, out: &mut [Real; 6]);
+
+    /// Computes (or approximates) the Hessian contribution for the specified body.
+    fn hessian(&self, bodies: &RigidBodySet, body: RigidBodyHandle, out: &mut [[Real; 6]; 6]);
+}
