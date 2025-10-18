@@ -6,6 +6,15 @@ export const simulationState = $state({
 		avbd: true,
 		impulse: true
 	},
+	objectSizes: {
+		cubeSize: 0.5,
+		sphereRadius: 0.5,
+		impulseOffset: 0.05
+	},
+	spawnSettings: {
+		spread: 8,
+		startHeight: 6
+	},
 	gravityScale: {
 		avbd: 1,
 		impulse: 1

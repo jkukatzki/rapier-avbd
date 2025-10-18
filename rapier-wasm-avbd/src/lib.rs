@@ -245,6 +245,35 @@ impl RapierWorld {
         handle.into_raw_parts().0
     }
 
+    pub fn create_kinematic_body(&mut self, x: f32, y: f32, z: f32) -> u32 {
+        let rigid_body = RigidBodyBuilder::kinematic_position_based()
+            .translation(Vector::new(x, y, z))
+            .build();
+        let handle = self.rigid_body_set.insert(rigid_body);
+        handle.into_raw_parts().0
+    }
+
+    pub fn remove_body(&mut self, body_handle: u32) {
+        let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
+        // Call remove with references to all required fields
+        // This works because we're only borrowing &mut self once at the WASM boundary
+        let _ = self.rigid_body_set.remove(
+            handle,
+            &mut self.islands,
+            &mut self.collider_set,
+            &mut self.impulse_joint_set,
+            &mut self.multibody_joint_set,
+            true,
+        );
+    }
+
+    pub fn set_body_translation(&mut self, body_handle: u32, x: f32, y: f32, z: f32) {
+        let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
+        if let Some(body) = self.rigid_body_set.get_mut(handle) {
+            body.set_translation(Vector::new(x, y, z), true);
+        }
+    }
+
     pub fn create_ball_collider(&mut self, body_handle: u32, radius: f32) -> u32 {
         let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
         let collider = ColliderBuilder::ball(radius).build();

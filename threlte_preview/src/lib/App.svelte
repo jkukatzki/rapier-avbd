@@ -12,7 +12,7 @@ import { Pane, Button, Slider, Folder, Separator, Stepper, Element, Checkbox } f
 	<Slider
 		label="Bodies per Solver"
 		min={20}
-    max={2000}
+    max={20000}
 		step={10}
 		bind:value={simulationState.numberOfObjects}
 	/>
@@ -65,6 +65,45 @@ import { Pane, Button, Slider, Folder, Separator, Stepper, Element, Checkbox } f
 			max={10}
 			step={0.1}
 			bind:value={simulationState.gravityScale.impulse}
+		/>
+	</Folder>
+	<Folder title="Object Sizes" expanded={false}>
+		<Slider
+			label="Cube Half-Size"
+			min={0.1}
+			max={2}
+			step={0.05}
+			bind:value={simulationState.objectSizes.cubeSize}
+		/>
+		<Slider
+			label="Sphere Radius"
+			min={0.1}
+			max={2}
+			step={0.05}
+			bind:value={simulationState.objectSizes.sphereRadius}
+		/>
+		<Slider
+			label="Impulse Offset"
+			min={0}
+			max={0.3}
+			step={0.01}
+			bind:value={simulationState.objectSizes.impulseOffset}
+		/>
+	</Folder>
+	<Folder title="Spawn Settings" expanded={false}>
+		<Slider
+			label="Spread Area"
+			min={2}
+			max={1000}
+			step={1}
+			bind:value={simulationState.spawnSettings.spread}
+		/>
+		<Slider
+			label="Start Height"
+			min={2}
+			max={20}
+			step={0.5}
+			bind:value={simulationState.spawnSettings.startHeight}
 		/>
 	</Folder>
     {#if isDev}
