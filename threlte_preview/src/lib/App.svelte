@@ -12,7 +12,7 @@
 	<Slider
 		label="Bodies per Solver"
 		min={20}
-		max={100}
+		max={1000}
 		step={10}
 		bind:value={simulationState.numberOfObjects}
 	/>
@@ -82,5 +82,6 @@
 	.viewport {
 		width: 100vw;
 		height: 100vh;
+		z-index: 100;
 	}
 </style>

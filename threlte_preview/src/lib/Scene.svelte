@@ -10,6 +10,7 @@
 		Object3D,
 		SphereGeometry
 	} from "three";
+	import { Gizmo, OrbitControls } from "@threlte/extras";
 
 	const MAX_INSTANCES = 200;
 	const worldRoot = new Object3D();
@@ -263,7 +264,13 @@
 	});
 </script>
 
-<T.PerspectiveCamera position={[12, 12, 12]} lookAt={[0, 0, 0]} fov={45} near={0.1} far={200} />
+<T.PerspectiveCamera
+  makeDefault
+  fov={100}
+  position.z={-15}
+>
+  <OrbitControls enableDamping ><Gizmo /></OrbitControls>
+</T.PerspectiveCamera>
 <T.AmbientLight args={[0xffffff, 0.7]} />
 <T.DirectionalLight args={[0xffffff, 1.1]} position={[6, 12, 6]} castShadow={true} />
 
