@@ -19,6 +19,8 @@ pub struct AvbdSolverParams {
     pub stiffness_min: Real,
     /// Maximum stiffness permitted for a constraint during the augmented updates.
     pub stiffness_max: Real,
+    /// Small diagonal term added to each per-body system to keep Hessians positive definite.
+    pub regularization: Real,
 }
 
 impl Default for AvbdSolverParams {
@@ -30,6 +32,7 @@ impl Default for AvbdSolverParams {
             gamma: 0.99,
             stiffness_min: 1.0,
             stiffness_max: 1.0e6,
+            regularization: 1.0e-6,
         }
     }
 }

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use crate::dynamics::{RigidBodyHandle, RigidBodySet, RigidBodyType};
 use crate::math::{ANG_DIM, AngVector, AngularInertia, Isometry, Real, SPATIAL_DIM, Vector};
 use crate::na;
-#[cfg(feature = "dim3")]
 use crate::utils::SimdAngularInertia;
 
 use super::{AVBD_DOF, AvbdConstraint, AvbdSolverParams};
@@ -53,6 +52,7 @@ impl AvbdSolver {
         }
 
         self.workspace.initialize(bodies, constraints, dt);
+        let color_schedule = self.workspace.color_schedule.clone();
         let warm_lambda = self.params.alpha * self.params.gamma;
         let stiffness_decay = self.params.gamma;
 
@@ -63,53 +63,59 @@ impl AvbdSolver {
         }
 
         for _ in 0..self.params.iterations {
-            for constraint in constraints.iter_mut() {
-                self.solve_constraint(bodies, constraint);
+            for bucket in &color_schedule {
+                for &constraint_index in bucket {
+                    if let Some(constraint) = constraints.get_mut(constraint_index) {
+                        self.solve_constraint(bodies, constraint_index, constraint);
+                    }
+                }
             }
         }
 
         self.workspace.writeback(bodies, dt);
     }
 
-    fn solve_constraint<C>(&mut self, bodies: &mut RigidBodySet, constraint: &mut C)
-    where
+    fn solve_constraint<C>(
+        &mut self,
+        bodies: &mut RigidBodySet,
+        constraint_index: usize,
+        constraint: &mut C,
+    ) where
         C: AvbdConstraint,
     {
-        let handles = constraint.bodies();
-        if handles.is_empty() {
-            return;
-        }
+        let entry_indices = match self.workspace.constraint_entries.get(constraint_index) {
+            Some(entries) if !entries.is_empty() => entries.clone(),
+            _ => return,
+        };
 
         let workspace = &mut self.workspace;
+        workspace.ensure_local_buffers(entry_indices.len());
 
-        {
-            let gradients = &mut workspace.gradients;
-            let entries = &mut workspace.entries;
+        for (slot, entry_index) in entry_indices.iter().enumerate() {
+            let handle = workspace.bodies[*entry_index].handle;
 
-            gradients.clear();
-            entries.clear();
-
-            for handle in handles.iter().copied() {
-                if let Some(entry_index) = workspace.body_map.get(&handle).copied() {
-                    let mut grad = [0.0; AVBD_DOF];
-                    constraint.gradient(bodies, handle, &mut grad);
-                    gradients.push(grad);
-                    entries.push(entry_index);
-                }
+            {
+                let grad = &mut workspace.gradients[slot];
+                grad.fill(0.0);
+                constraint.gradient(bodies, handle, grad);
             }
-        }
 
-        if workspace.entries.is_empty() {
-            return;
-        }
+            {
+                let hessian = &mut workspace.hessians[slot];
+                for row in hessian.iter_mut() {
+                    row.fill(0.0);
+                }
+                constraint.hessian(bodies, handle, hessian);
+            }
 
-        workspace
-            .minv_gradients
-            .resize(workspace.entries.len(), [0.0; AVBD_DOF]);
-        for i in 0..workspace.entries.len() {
-            let entry_index = workspace.entries[i];
-            let grad = workspace.gradients[i];
-            workspace.minv_gradients[i] = workspace.mass_inverse(entry_index, &grad);
+            let grad_ref = &workspace.gradients[slot];
+            let hessian_ref = &workspace.hessians[slot];
+            workspace.minv_gradients[slot] = workspace.solve_local_system(
+                *entry_index,
+                grad_ref,
+                hessian_ref,
+                self.params.regularization,
+            );
         }
 
         let compliance = {
@@ -125,7 +131,8 @@ impl AvbdSolver {
         for (grad, minv_grad) in workspace
             .gradients
             .iter()
-            .zip(workspace.minv_gradients.iter())
+            .take(entry_indices.len())
+            .zip(workspace.minv_gradients.iter().take(entry_indices.len()))
         {
             let mut acc = 0.0;
             for i in 0..AVBD_DOF {
@@ -149,14 +156,13 @@ impl AvbdSolver {
             (delta_lambda, updated_lambda, updated_stiffness)
         };
 
-        for i in 0..workspace.entries.len() {
-            let entry_index = workspace.entries[i];
-            let minv_grad = workspace.minv_gradients[i];
+        for (slot, entry_index) in entry_indices.iter().enumerate() {
+            let minv_grad = workspace.minv_gradients[slot];
             let mut delta = [0.0; AVBD_DOF];
             for i in 0..AVBD_DOF {
                 delta[i] = minv_grad[i] * delta_lambda;
             }
-            workspace.apply_body_delta(entry_index, &delta, bodies);
+            workspace.apply_body_delta(*entry_index, &delta, bodies);
         }
 
         let state = constraint.state_mut();
@@ -179,8 +185,17 @@ struct SolverWorkspace {
     body_map: HashMap<RigidBodyHandle, usize>,
     bodies: Vec<BodyEntry>,
     gradients: Vec<[Real; AVBD_DOF]>,
+    hessians: Vec<[[Real; AVBD_DOF]; AVBD_DOF]>,
     minv_gradients: Vec<[Real; AVBD_DOF]>,
-    entries: Vec<usize>,
+    constraint_entries: Vec<Vec<usize>>,
+    constraint_colors: Vec<usize>,
+    body_constraints: Vec<Vec<usize>>,
+    color_buckets: Vec<Vec<usize>>,
+    color_schedule: Vec<Vec<usize>>,
+    active_constraints: Vec<usize>,
+    tmp_color_marks: Vec<bool>,
+    tmp_used_colors: Vec<usize>,
+    dt: Real,
 }
 
 impl SolverWorkspace {
@@ -188,8 +203,10 @@ impl SolverWorkspace {
     where
         C: AvbdConstraint,
     {
+        self.dt = dt;
         self.body_map.clear();
         self.bodies.clear();
+        self.color_schedule.clear();
 
         for constraint in constraints {
             for handle in constraint.bodies() {
@@ -226,6 +243,127 @@ impl SolverWorkspace {
                 self.body_map.insert(*handle, index);
                 self.bodies.push(entry);
             }
+        }
+
+        self.body_constraints.truncate(self.bodies.len());
+        self.body_constraints
+            .resize_with(self.bodies.len(), Vec::new);
+        for list in &mut self.body_constraints {
+            list.clear();
+        }
+
+        self.constraint_entries.truncate(constraints.len());
+        self.constraint_entries
+            .resize_with(constraints.len(), Vec::new);
+        for entries in &mut self.constraint_entries {
+            entries.clear();
+        }
+
+        self.constraint_colors.resize(constraints.len(), usize::MAX);
+        self.active_constraints.clear();
+
+        for (constraint_index, constraint) in constraints.iter().enumerate() {
+            let entries = &mut self.constraint_entries[constraint_index];
+            for handle in constraint.bodies() {
+                if let Some(&entry_index) = self.body_map.get(handle) {
+                    entries.push(entry_index);
+                }
+            }
+            entries.sort_unstable();
+            entries.dedup();
+
+            if entries.is_empty() {
+                continue;
+            }
+
+            self.active_constraints.push(constraint_index);
+            for &entry_index in entries.iter() {
+                if let Some(body_constraints) = self.body_constraints.get_mut(entry_index) {
+                    body_constraints.push(constraint_index);
+                }
+            }
+        }
+
+        self.compute_constraint_coloring();
+    }
+
+    fn ensure_local_buffers(&mut self, count: usize) {
+        if self.gradients.len() < count {
+            self.gradients.resize(count, [0.0; AVBD_DOF]);
+        }
+        if self.hessians.len() < count {
+            self.hessians.resize(count, [[0.0; AVBD_DOF]; AVBD_DOF]);
+        }
+        if self.minv_gradients.len() < count {
+            self.minv_gradients.resize(count, [0.0; AVBD_DOF]);
+        }
+    }
+
+    fn compute_constraint_coloring(&mut self) {
+        for color in &mut self.constraint_colors {
+            *color = usize::MAX;
+        }
+
+        for bucket in &mut self.color_buckets {
+            bucket.clear();
+        }
+
+        self.tmp_color_marks.clear();
+        self.tmp_used_colors.clear();
+
+        for &constraint_index in &self.active_constraints {
+            let entries = &self.constraint_entries[constraint_index];
+            self.tmp_used_colors.clear();
+
+            for &entry_index in entries {
+                if let Some(neighbors) = self.body_constraints.get(entry_index) {
+                    for &neighbor in neighbors {
+                        if neighbor == constraint_index {
+                            continue;
+                        }
+                        let color = self.constraint_colors[neighbor];
+                        if color != usize::MAX {
+                            if color >= self.tmp_color_marks.len() {
+                                self.tmp_color_marks.resize(color + 1, false);
+                            }
+                            if !self.tmp_color_marks[color] {
+                                self.tmp_color_marks[color] = true;
+                                self.tmp_used_colors.push(color);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut color = 0;
+            loop {
+                if color >= self.tmp_color_marks.len() {
+                    self.tmp_color_marks.push(false);
+                    break;
+                }
+                if !self.tmp_color_marks[color] {
+                    break;
+                }
+                color += 1;
+            }
+
+            self.constraint_colors[constraint_index] = color;
+            if self.color_buckets.len() <= color {
+                self.color_buckets.resize_with(color + 1, Vec::new);
+            }
+            self.color_buckets[color].push(constraint_index);
+
+            for used_color in self.tmp_used_colors.drain(..) {
+                self.tmp_color_marks[used_color] = false;
+            }
+        }
+
+        self.color_schedule.clear();
+        for bucket in &self.color_buckets {
+            if bucket.is_empty() {
+                continue;
+            }
+            self.color_schedule.push(bucket.clone());
         }
     }
 
@@ -299,6 +437,71 @@ impl SolverWorkspace {
             }
         }
     }
+
+    fn solve_local_system(
+        &self,
+        entry_index: usize,
+        grad: &[Real; AVBD_DOF],
+        hessian: &[[Real; AVBD_DOF]; AVBD_DOF],
+        regularization: Real,
+    ) -> [Real; AVBD_DOF] {
+        let entry = &self.bodies[entry_index];
+        let dt_sq = if self.dt > 0.0 {
+            self.dt * self.dt
+        } else {
+            1.0
+        };
+
+        let mut local = na::SMatrix::<Real, AVBD_DOF, AVBD_DOF>::zeros();
+
+        for i in 0..LINEAR_DOF {
+            let inv_mass = entry.inv_mass[i];
+            if inv_mass > 0.0 {
+                local[(i, i)] = (1.0 / inv_mass) / dt_sq;
+            } else {
+                local[(i, i)] = regularization;
+            }
+        }
+
+        #[cfg(feature = "dim2")]
+        {
+            let inertia = entry.inv_inertia.inverse();
+            local[(LINEAR_DOF, LINEAR_DOF)] += inertia / dt_sq;
+        }
+
+        #[cfg(feature = "dim3")]
+        {
+            let inertia_matrix = entry.inv_inertia.inverse().into_matrix();
+            for r in 0..ANG_DIM {
+                for c in 0..ANG_DIM {
+                    local[(LINEAR_DOF + r, LINEAR_DOF + c)] += inertia_matrix[(r, c)] / dt_sq;
+                }
+            }
+        }
+
+        for row in 0..AVBD_DOF {
+            for col in 0..AVBD_DOF {
+                local[(row, col)] += hessian[row][col];
+            }
+        }
+
+        for i in 0..AVBD_DOF {
+            local[(i, i)] += regularization;
+        }
+
+        let grad_vec = na::SVector::<Real, AVBD_DOF>::from_row_slice(grad);
+
+        if let Some(cholesky) = na::Cholesky::new(local) {
+            let solved = cholesky.solve(&grad_vec);
+            let mut out = [0.0; AVBD_DOF];
+            for i in 0..AVBD_DOF {
+                out[i] = solved[i];
+            }
+            out
+        } else {
+            self.mass_inverse(entry_index, grad)
+        }
+    }
 }
 
 fn split_gradient(vector: &[Real; AVBD_DOF]) -> (Vector<Real>, AngVector<Real>) {
@@ -341,6 +544,12 @@ mod tests {
         state: AvbdConstraintState,
         target: Real,
         direction: Vector<Real>,
+    }
+
+    fn along_x(value: Real) -> Vector<Real> {
+        let mut v = Vector::zeros();
+        v[0] = value;
+        v
     }
 
     impl DistanceConstraint {
@@ -445,5 +654,58 @@ mod tests {
         let p2 = bodies[h2].pos.position.translation.vector.x;
         let error = (p2 - p1 - 1.0).abs();
         assert!(error < 5.0e-2, "residual error {error}, p1 {p1}, p2 {p2}");
+    }
+
+    #[test]
+    fn resolves_chain_of_constraints_without_conflicts() {
+        let mut bodies = RigidBodySet::new();
+        let h1 = bodies.insert(
+            RigidBodyBuilder::dynamic()
+                .translation(along_x(0.0))
+                .additional_mass(1.0)
+                .build(),
+        );
+        let h2 = bodies.insert(
+            RigidBodyBuilder::dynamic()
+                .translation(along_x(3.0))
+                .additional_mass(1.0)
+                .build(),
+        );
+        let h3 = bodies.insert(
+            RigidBodyBuilder::dynamic()
+                .translation(along_x(6.0))
+                .additional_mass(1.0)
+                .build(),
+        );
+
+        for handle in [h1, h2, h3] {
+            if let Some(rb) = bodies.get_mut(handle) {
+                rb.mprops.effective_inv_mass = Vector::repeat(1.0);
+            }
+        }
+
+        let direction = Vector::x_axis().into_inner();
+        let mut constraints = [
+            DistanceConstraint::new(h1, h2, 1.0, direction),
+            DistanceConstraint::new(h2, h3, 1.0, direction),
+        ];
+
+        let mut solver = AvbdSolver::new(AvbdSolverParams {
+            iterations: 12,
+            ..Default::default()
+        });
+
+        solver.solve(&mut bodies, &mut constraints, 0.01);
+
+        let p1 = bodies[h1].translation().x;
+        let p2 = bodies[h2].translation().x;
+        let p3 = bodies[h3].translation().x;
+        let d12 = (p2 - p1).abs();
+        let d23 = (p3 - p2).abs();
+
+        assert!(
+            (d12 - 1.0).abs() < 0.1 && (d23 - 1.0).abs() < 0.1,
+            "chain distances did not converge sufficiently: d12={d12}, d23={d23}"
+        );
     }
 }
