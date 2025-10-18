@@ -176,6 +176,45 @@ impl RapierWorld {
         self.integration_parameters.warmstart_coefficient = clamped as Real;
     }
 
+    pub fn set_avbd_params(
+        &mut self,
+        iterations: u32,
+        alpha: f32,
+        beta: f32,
+        gamma: f32,
+        stiffness_min: f32,
+        stiffness_max: f32,
+        regularization: f32,
+    ) {
+        #[cfg(feature = "solver_avbd")]
+        {
+            let params = &mut self.integration_parameters.avbd_solver_params;
+            params.iterations = iterations.max(1) as usize;
+            params.alpha = alpha.clamp(0.0, 1.0) as Real;
+            params.beta = beta.max(1.0) as Real;
+            params.gamma = gamma.clamp(0.0, 1.0) as Real;
+
+            let min_val = stiffness_min.max(0.0) as Real;
+            let max_val = stiffness_max.max(min_val + Real::EPSILON) as Real;
+            params.stiffness_min = min_val;
+            params.stiffness_max = max_val;
+            params.regularization = regularization.max(0.0) as Real;
+        }
+
+        #[cfg(not(feature = "solver_avbd"))]
+        {
+            let _ = (
+                iterations,
+                alpha,
+                beta,
+                gamma,
+                stiffness_min,
+                stiffness_max,
+                regularization,
+            );
+        }
+    }
+
     pub fn create_dynamic_body(&mut self, x: f32, y: f32, z: f32) -> u32 {
         let rigid_body = RigidBodyBuilder::dynamic()
             .translation(Vector::new(x, y, z))

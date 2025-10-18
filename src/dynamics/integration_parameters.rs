@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(doc)]
 use super::RigidBodyActivation;
 
+#[cfg(feature = "solver_avbd")]
+use super::solver::AvbdSolverParams;
+
 // TODO: enabling the block solver in 3d introduces a lot of jitters in
 //       the 3D domino demo. So for now we dont enable it in 3D.
 pub(crate) static BLOCK_SOLVER_ENABLED: bool = cfg!(feature = "dim2");
@@ -184,6 +187,9 @@ pub struct IntegrationParameters {
     /// The type of friction constraints used in the simulation.
     #[cfg(feature = "dim3")]
     pub friction_model: FrictionModel,
+    /// Parameters passed to the AVBD solver backend.
+    #[cfg(feature = "solver_avbd")]
+    pub avbd_solver_params: AvbdSolverParams,
 }
 
 impl IntegrationParameters {
@@ -370,6 +376,8 @@ impl Default for IntegrationParameters {
             length_unit: 1.0,
             #[cfg(feature = "dim3")]
             friction_model: FrictionModel::default(),
+            #[cfg(feature = "solver_avbd")]
+            avbd_solver_params: AvbdSolverParams::default(),
         }
     }
 }

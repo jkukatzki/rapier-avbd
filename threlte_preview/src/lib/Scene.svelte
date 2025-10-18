@@ -84,6 +84,20 @@
 		updateInstances(sphereMeshImpulse, sphereHandlesImpulse, worldImpulse);
 	}
 
+	function applyAvbdParams() {
+		if (!worldAvbd) return;
+		const params = simulationState.avbd;
+		worldAvbd.set_avbd_params(
+			params.iterations,
+			params.alpha,
+			params.beta,
+			params.gamma,
+			params.stiffnessMin,
+			params.stiffnessMax,
+			params.regularization
+		);
+	}
+
 	function resetWorlds() {
 		if (!worldAvbd || !worldImpulse) return;
 		worldAvbd.reset();
@@ -193,6 +207,7 @@
 
 			setupGround(worldAvbd);
 			setupGround(worldImpulse);
+			applyAvbdParams();
 
 			worldsReady = true;
 			spawnBodies(simulationState.numberOfObjects);
@@ -209,6 +224,31 @@
 		if (worldsReady && simulationState.numberOfObjects !== lastSpawnCount) {
 			spawnBodies(simulationState.numberOfObjects);
 		}
+	});
+
+	$effect(() => {
+		if (!worldsReady) return;
+		// Access AVBD parameters to register dependencies with runes.
+		const {
+			iterations,
+			alpha,
+			beta,
+			gamma,
+			stiffnessMin,
+			stiffnessMax,
+			regularization
+		} = simulationState.avbd;
+
+		if (!worldAvbd) return;
+		worldAvbd.set_avbd_params(
+			iterations,
+			alpha,
+			beta,
+			gamma,
+			stiffnessMin,
+			stiffnessMax,
+			regularization
+		);
 	});
 
 	// Watch for regen changes
