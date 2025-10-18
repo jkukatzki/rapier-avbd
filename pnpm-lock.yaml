@@ -17,8 +17,8 @@ importers:
   threlte_preview:
     dependencies:
       '@dimforge/rapier3d-compat':
-        specifier: link:../rapier-wasm-avbd/pkg
-        version: link:../rapier-wasm-avbd/pkg
+        specifier: 0.12.0
+        version: 0.12.0
       '@threlte/core':
         specifier: ^8.1.7
         version: 8.1.7(svelte@5.41.0)(three@0.180.0)
@@ -27,7 +27,10 @@ importers:
         version: 9.5.5(@types/three@0.180.0)(svelte@5.41.0)(three@0.180.0)
       '@threlte/rapier':
         specifier: ^3.1.5
-        version: 3.1.5(@dimforge/rapier3d-compat@rapier-wasm-avbd+pkg)(svelte@5.41.0)(three@0.180.0)
+        version: 3.1.5(@dimforge/rapier3d-compat@0.12.0)(svelte@5.41.0)(three@0.180.0)
+      '@validvector/rapier3d-avbd':
+        specifier: link:../rapier-wasm-avbd/pkg
+        version: link:../rapier-wasm-avbd/pkg
       svelte-tweakpane-ui:
         specifier: ^1.5.10
         version: 1.5.10(svelte@5.41.0)
@@ -1921,9 +1924,9 @@ snapshots:
     transitivePeerDependencies:
       - '@types/three'
 
-  '@threlte/rapier@3.1.5(@dimforge/rapier3d-compat@rapier-wasm-avbd+pkg)(svelte@5.41.0)(three@0.180.0)':
+  '@threlte/rapier@3.1.5(@dimforge/rapier3d-compat@0.12.0)(svelte@5.41.0)(three@0.180.0)':
     dependencies:
-      '@dimforge/rapier3d-compat': link:rapier-wasm-avbd/pkg
+      '@dimforge/rapier3d-compat': 0.12.0
       svelte: 5.41.0
       three: 0.180.0
 

@@ -18,15 +18,15 @@
 	worldRoot.add(avbdRoot);
 	worldRoot.add(impulseRoot);
 
-	const cubeMaterialAvbd = new MeshStandardMaterial({ color: 0x4caf50 });
-	const sphereMaterialAvbd = new MeshStandardMaterial({ color: 0x2196f3 });
+	const cubeMaterialAvbd = new MeshStandardMaterial({ color: 'green' });
+	const sphereMaterialAvbd = new MeshStandardMaterial({ color: 'blue' });
 	const cubeMaterialImpulse = new MeshStandardMaterial({
-		color: 0xff9800,
+		color: 'orange',
 		transparent: true,
 		opacity: 0.5
 	});
 	const sphereMaterialImpulse = new MeshStandardMaterial({
-		color: 0xff5722,
+		color: 'red',
 		transparent: true,
 		opacity: 0.5
 	});
@@ -34,7 +34,7 @@
 	const cubeMeshAvbd = new InstancedMesh(new BoxGeometry(1, 1, 1), cubeMaterialAvbd, MAX_INSTANCES);
 	const sphereMeshAvbd = new InstancedMesh(new SphereGeometry(0.6, 24, 24), sphereMaterialAvbd, MAX_INSTANCES);
 	const cubeMeshImpulse = new InstancedMesh(
-		new BoxGeometry(1, 1, 1),
+		new BoxGeometry(3, 3, 3),
 		cubeMaterialImpulse,
 		MAX_INSTANCES
 	);
@@ -147,8 +147,16 @@
 
 		for (let i = 0; i < handles.length; i++) {
 			const translation = world.get_body_translation(handles[i]);
+			const rotation = world.get_body_rotation(handles[i]);
+
 			tempObject.position.set(translation[0], translation[1], translation[2]);
-			tempObject.rotation.set(0, 0, 0);
+
+			if (rotation && rotation.length === 4) {
+				tempObject.quaternion.set(rotation[0], rotation[1], rotation[2], rotation[3]);
+			} else {
+				tempObject.quaternion.identity();
+			}
+
 			tempObject.updateMatrix();
 			mesh.setMatrixAt(i, tempObject.matrix);
 		}
@@ -171,7 +179,7 @@
 		if (import.meta.env.SSR) return;
 
 		(async () => {
-			const rapierModule = await import("@dimforge/rapier3d-compat");
+			const rapierModule = await import("@validvector/rapier3d-avbd");
 			const { default: init, init_panic_hook, RapierWorld } = rapierModule;
 
 			await init();
@@ -179,6 +187,10 @@
 
 			worldAvbd = new RapierWorld(0, -9.81, 0, true);
 			worldImpulse = new RapierWorld(0, -9.81, 0, false);
+
+			console.info("AVBD solver backend:", worldAvbd.get_solver_backend());
+			console.info("Impulse solver backend:", worldImpulse.get_solver_backend());
+
 			setupGround(worldAvbd);
 			setupGround(worldImpulse);
 

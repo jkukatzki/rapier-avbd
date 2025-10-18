@@ -225,4 +225,15 @@ impl RapierWorld {
             vec![0.0, 0.0, 0.0]
         }
     }
+
+    pub fn get_body_rotation(&self, body_handle: u32) -> Vec<f32> {
+        let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
+
+        if let Some(body) = self.rigid_body_set.get(handle) {
+            let quat = body.rotation().quaternion();
+            vec![quat.i, quat.j, quat.k, quat.w]
+        } else {
+            vec![0.0, 0.0, 0.0, 1.0]
+        }
+    }
 }
