@@ -148,6 +148,57 @@
             line-height: 1.4;
             font-family: "Courier New", monospace;
         }
+        .solver-timing {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        .solver-timing h3 {
+            margin: 0 0 15px 0;
+            font-size: 18px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .timing-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        .timing-box {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(10px);
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .timing-box h4 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            opacity: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .timing-value {
+            font-size: 32px;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+        .timing-label {
+            font-size: 12px;
+            opacity: 0.85;
+            margin-top: 5px;
+        }
+        .timing-comparison {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            text-align: center;
+            font-size: 16px;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -156,6 +207,25 @@
         
         <div id="status" class="status info">
             Loading WASM module...
+        </div>
+
+        <div id="solver-timing" class="solver-timing" style="display: none;">
+            <h3>⚡ Real-Time Solver Performance</h3>
+            <div class="timing-grid">
+                <div class="timing-box">
+                    <h4>🟢 AVBD Solver</h4>
+                    <div class="timing-value" id="live-avbd-solver-ms">0.000</div>
+                    <div class="timing-label">milliseconds per step</div>
+                </div>
+                <div class="timing-box">
+                    <h4>🟠 Impulse Solver</h4>
+                    <div class="timing-value" id="live-impulse-solver-ms">0.000</div>
+                    <div class="timing-label">milliseconds per step</div>
+                </div>
+            </div>
+            <div class="timing-comparison" id="timing-comparison">
+                Waiting for data...
+            </div>
         </div>
 
         <div class="controls">
@@ -332,6 +402,8 @@
         let stepCountImpulse = 0;
         let lastAvbdMetrics = zeroMetrics();
         let lastImpulseMetrics = zeroMetrics();
+        let sumAvbdMetrics = zeroMetrics();
+        let sumImpulseMetrics = zeroMetrics();
         let avbdAppliedParams = null;
 
         function log(message, type = 'info') {
@@ -400,6 +472,29 @@
             document.getElementById(`${prefix}-writeback-ms`).textContent = metrics.writeback.toFixed(3);
         }
 
+        function updateLiveSolverTiming() {
+            const avbdSolver = lastAvbdMetrics.solver;
+            const impulseSolver = lastImpulseMetrics.solver;
+            
+            document.getElementById('live-avbd-solver-ms').textContent = avbdSolver.toFixed(3);
+            document.getElementById('live-impulse-solver-ms').textContent = impulseSolver.toFixed(3);
+            
+            const comparison = document.getElementById('timing-comparison');
+            if (avbdSolver > 0 && impulseSolver > 0) {
+                const improvement = ((impulseSolver - avbdSolver) / impulseSolver) * 100;
+                if (improvement > 0) {
+                    comparison.textContent = `✨ AVBD is ${improvement.toFixed(1)}% faster`;
+                    comparison.style.color = '#4ade80';
+                } else if (improvement < 0) {
+                    comparison.textContent = `⚠️ AVBD is ${Math.abs(improvement).toFixed(1)}% slower`;
+                    comparison.style.color = '#fbbf24';
+                } else {
+                    comparison.textContent = `⚖️ Both solvers equal`;
+                    comparison.style.color = '#ffffff';
+                }
+            }
+        }
+
         function logMetrics(label, metrics) {
             log(
                 `${label}: total=${metrics.total.toFixed(3)}ms | collision=${metrics.collision.toFixed(3)}ms | ` +
@@ -428,6 +523,8 @@
             stepCountImpulse = 0;
             lastAvbdMetrics = zeroMetrics();
             lastImpulseMetrics = zeroMetrics();
+            sumAvbdMetrics = zeroMetrics();
+            sumImpulseMetrics = zeroMetrics();
             updateMetrics();
         }
 
@@ -502,19 +599,22 @@
 
         function updateMetrics() {
             if (worldAVBD) {
+                const averageAvbd = stepCountAVBD > 0 ? scaleMetrics(sumAvbdMetrics, 1 / stepCountAVBD) : zeroMetrics();
                 document.getElementById('solver-type').textContent = worldAVBD.get_solver_backend();
                 document.getElementById('body-count').textContent = worldAVBD.num_bodies();
                 document.getElementById('collider-count').textContent = worldAVBD.num_colliders();
                 document.getElementById('step-count').textContent = stepCountAVBD;
-                updateMetricValues('avbd', lastAvbdMetrics);
+                updateMetricValues('avbd', averageAvbd);
             }
             if (worldImpulse) {
+                const averageImpulse = stepCountImpulse > 0 ? scaleMetrics(sumImpulseMetrics, 1 / stepCountImpulse) : zeroMetrics();
                 document.getElementById('impulse-solver-type').textContent = worldImpulse.get_solver_backend();
                 document.getElementById('impulse-body-count').textContent = worldImpulse.num_bodies();
                 document.getElementById('impulse-collider-count').textContent = worldImpulse.num_colliders();
                 document.getElementById('impulse-step-count').textContent = stepCountImpulse;
-                updateMetricValues('impulse', lastImpulseMetrics);
+                updateMetricValues('impulse', averageImpulse);
             }
+            updateLiveSolverTiming();
         }
 
         function setStatus(message, type) {
@@ -574,6 +674,7 @@
                 document.getElementById('runConfigSweep').disabled = false;
                 document.getElementById('metrics').style.display = 'block';
                 document.getElementById('impulse-metrics').style.display = 'block';
+                document.getElementById('solver-timing').style.display = 'block';
 
                 resetSimulationState();
                 applyAvbdParamsFromUI(false);
@@ -669,6 +770,7 @@
             for (let i = 0; i < steps; i++) {
                 const metrics = metricsFromWasm(worldAVBD.step_with_metrics());
                 accumulateMetrics(avbdSum, metrics);
+                accumulateMetrics(sumAvbdMetrics, metrics);
                 lastAvbdMetrics = metrics;
                 stepCountAVBD++;
             }
@@ -676,6 +778,7 @@
             for (let i = 0; i < steps; i++) {
                 const metrics = metricsFromWasm(worldImpulse.step_with_metrics());
                 accumulateMetrics(impulseSum, metrics);
+                accumulateMetrics(sumImpulseMetrics, metrics);
                 lastImpulseMetrics = metrics;
                 stepCountImpulse++;
             }
@@ -922,6 +1025,7 @@
                 for (let i = 0; i < testSteps; i++) {
                     const metrics = metricsFromWasm(worldAVBD.step_with_metrics());
                     accumulateMetrics(avbdSum, metrics);
+                    accumulateMetrics(sumAvbdMetrics, metrics);
                     lastAvbdMetrics = metrics;
                     stepCountAVBD++;
                 }
@@ -950,12 +1054,14 @@
             try {
                 applyAvbdParamsFromUI(false);
                 const avbdMetrics = metricsFromWasm(worldAVBD.step_with_metrics());
+                accumulateMetrics(sumAvbdMetrics, avbdMetrics);
                 stepCountAVBD++;
                 lastAvbdMetrics = avbdMetrics;
 
                 let impulseMetrics = null;
                 if (worldImpulse) {
                     impulseMetrics = metricsFromWasm(worldImpulse.step_with_metrics());
+                    accumulateMetrics(sumImpulseMetrics, impulseMetrics);
                     stepCountImpulse++;
                     lastImpulseMetrics = impulseMetrics;
                 }

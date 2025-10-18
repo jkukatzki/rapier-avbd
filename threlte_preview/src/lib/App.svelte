@@ -1,6 +1,6 @@
 <script lang="ts">
 import Scene from "./Scene.svelte";
-import { Pane, Button, Slider, Folder, Separator, Stepper, Element } from "svelte-tweakpane-ui";
+import { Pane, Button, Slider, Folder, Separator, Stepper, Element, Checkbox } from "svelte-tweakpane-ui";
 	import { Canvas } from "@threlte/core";
 	import { simulationState, triggerRegen } from "./sharedState.svelte";
 
@@ -16,6 +16,41 @@ import { Pane, Button, Slider, Folder, Separator, Stepper, Element } from "svelt
 		step={10}
 		bind:value={simulationState.numberOfObjects}
 	/>
+	<Separator />
+	<Folder title="Enable/Disable Solvers" expanded={true}>
+		<Checkbox
+			label="AVBD Solver"
+			bind:value={simulationState.enabled.avbd}
+		/>
+		<Checkbox
+			label="Impulse Solver"
+			bind:value={simulationState.enabled.impulse}
+		/>
+	</Folder>
+	<Separator />
+	<Folder title="Solver Performance" expanded={true}>
+		<Element>
+			<div class="timing-display">
+				<div class="timing-row">
+					<strong>AVBD Solver:</strong>
+					<span>{simulationState.solverTimings.avbd.solverMs.toFixed(3)} ms</span>
+				</div>
+				<div class="timing-row">
+					<strong>Impulse Solver:</strong>
+					<span>{simulationState.solverTimings.impulse.solverMs.toFixed(3)} ms</span>
+				</div>
+				<div class="timing-separator"></div>
+				<div class="timing-row timing-secondary">
+					<span>AVBD Total:</span>
+					<span>{simulationState.solverTimings.avbd.totalMs.toFixed(3)} ms</span>
+				</div>
+				<div class="timing-row timing-secondary">
+					<span>Impulse Total:</span>
+					<span>{simulationState.solverTimings.impulse.totalMs.toFixed(3)} ms</span>
+				</div>
+			</div>
+		</Element>
+	</Folder>
 	<Folder title="Gravity" expanded={false}>
 		<Slider
 			label="AVBD Gravity Scale"
@@ -123,5 +158,36 @@ import { Pane, Button, Slider, Folder, Separator, Stepper, Element } from "svelt
 
     .avbd-report strong {
         font-size: 13px;
+    }
+
+    .timing-display {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 12px;
+        padding: 4px 0;
+    }
+
+    .timing-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .timing-row strong {
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .timing-secondary {
+        font-size: 11px;
+        opacity: 0.8;
+    }
+
+    .timing-separator {
+        height: 1px;
+        background: rgba(255, 255, 255, 0.1);
+        margin: 2px 0;
     }
 </style>

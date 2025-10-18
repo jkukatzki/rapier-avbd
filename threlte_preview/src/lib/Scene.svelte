@@ -221,12 +221,24 @@ function applyAvbdParams() {
 
 	useTask(() => {
 		if (!worldAvbd || !worldImpulse) return;
-		worldAvbd.step();
-		worldImpulse.step();
-		updateInstances(cubeMeshAvbd, cubeHandlesAvbd, worldAvbd);
-		updateInstances(sphereMeshAvbd, sphereHandlesAvbd, worldAvbd);
-		updateInstances(cubeMeshImpulse, cubeHandlesImpulse, worldImpulse);
-		updateInstances(sphereMeshImpulse, sphereHandlesImpulse, worldImpulse);
+		
+		// Step AVBD world if enabled
+		if (simulationState.enabled.avbd) {
+			const avbdMetrics = worldAvbd.step_with_metrics();
+			simulationState.solverTimings.avbd.solverMs = avbdMetrics.solver_ms();
+			simulationState.solverTimings.avbd.totalMs = avbdMetrics.total_ms();
+			updateInstances(cubeMeshAvbd, cubeHandlesAvbd, worldAvbd);
+			updateInstances(sphereMeshAvbd, sphereHandlesAvbd, worldAvbd);
+		}
+		
+		// Step Impulse world if enabled
+		if (simulationState.enabled.impulse) {
+			const impulseMetrics = worldImpulse.step_with_metrics();
+			simulationState.solverTimings.impulse.solverMs = impulseMetrics.solver_ms();
+			simulationState.solverTimings.impulse.totalMs = impulseMetrics.total_ms();
+			updateInstances(cubeMeshImpulse, cubeHandlesImpulse, worldImpulse);
+			updateInstances(sphereMeshImpulse, sphereHandlesImpulse, worldImpulse);
+		}
 	});
 
 	// Initialize worlds on mount
@@ -339,6 +351,12 @@ $effect(() => {
 			spawnBodies(simulationState.numberOfObjects);
 			lastRegenValue = currentRegen;
 		}
+	});
+
+	// Control visibility of solver meshes
+	$effect(() => {
+		avbdRoot.visible = simulationState.enabled.avbd;
+		impulseRoot.visible = simulationState.enabled.impulse;
 	});
 </script>
 

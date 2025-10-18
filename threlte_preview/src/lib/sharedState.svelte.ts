@@ -2,6 +2,10 @@
 export const simulationState = $state({
 	numberOfObjects: 60,
 	regen: false,
+	enabled: {
+		avbd: true,
+		impulse: true
+	},
 	gravityScale: {
 		avbd: 1,
 		impulse: 1
@@ -23,6 +27,16 @@ export const simulationState = $state({
 		stiffnessMin: 1,
 		stiffnessMax: 1_000_000,
 		regularization: 0.000_001
+	},
+	solverTimings: {
+		avbd: {
+			solverMs: 0,
+			totalMs: 0
+		},
+		impulse: {
+			solverMs: 0,
+			totalMs: 0
+		}
 	}
 });
 
