@@ -176,6 +176,14 @@ impl RapierWorld {
         self.integration_parameters.warmstart_coefficient = clamped as Real;
     }
 
+    pub fn set_gravity_scale(&mut self, scale: f32) {
+        let gravity_scale = scale as Real;
+
+        for handle in self.rigid_body_set.iter_mut() {
+            handle.1.set_gravity_scale(gravity_scale, false);
+        }
+    }
+
     pub fn set_avbd_params(
         &mut self,
         iterations: u32,
@@ -186,33 +194,39 @@ impl RapierWorld {
         stiffness_max: f32,
         regularization: f32,
     ) {
-        #[cfg(feature = "solver_avbd")]
-        {
-            let params = &mut self.integration_parameters.avbd_solver_params;
-            params.iterations = iterations.max(1) as usize;
-            params.alpha = alpha.clamp(0.0, 1.0) as Real;
-            params.beta = beta.max(1.0) as Real;
-            params.gamma = gamma.clamp(0.0, 1.0) as Real;
+        let params = &mut self.integration_parameters.avbd_solver_params;
+        params.iterations = iterations.max(1) as usize;
+        params.alpha = alpha.clamp(0.0, 1.0) as Real;
+        params.beta = beta.max(1.0) as Real;
+        params.gamma = gamma.clamp(0.0, 1.0) as Real;
 
-            let min_val = stiffness_min.max(0.0) as Real;
-            let max_val = stiffness_max.max(min_val + Real::EPSILON) as Real;
-            params.stiffness_min = min_val;
-            params.stiffness_max = max_val;
-            params.regularization = regularization.max(0.0) as Real;
-        }
+        let min_val = stiffness_min.max(0.0) as Real;
+        let max_val = stiffness_max.max(min_val + Real::EPSILON) as Real;
+        params.stiffness_min = min_val;
+        params.stiffness_max = max_val;
+        params.regularization = regularization.max(0.0) as Real;
+    }
 
-        #[cfg(not(feature = "solver_avbd"))]
-        {
-            let _ = (
-                iterations,
-                alpha,
-                beta,
-                gamma,
-                stiffness_min,
-                stiffness_max,
-                regularization,
-            );
+    pub fn set_body_gravity_scale(&mut self, body_handle: u32, scale: f32) {
+        let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
+        if let Some(body) = self.rigid_body_set.get_mut(handle) {
+            if body.body_type() == RigidBodyType::Dynamic {
+                body.set_gravity_scale(scale as Real, true);
+            }
         }
+    }
+
+    pub fn get_avbd_params(&self) -> Vec<f32> {
+        let params = &self.integration_parameters.avbd_solver_params;
+        vec![
+            params.iterations as f32,
+            params.alpha as f32,
+            params.beta as f32,
+            params.gamma as f32,
+            params.stiffness_min as f32,
+            params.stiffness_max as f32,
+            params.regularization as f32,
+        ]
     }
 
     pub fn create_dynamic_body(&mut self, x: f32, y: f32, z: f32) -> u32 {
@@ -265,14 +279,46 @@ impl RapierWorld {
         }
     }
 
-    pub fn get_body_rotation(&self, body_handle: u32) -> Vec<f32> {
-        let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
+pub fn get_body_rotation(&self, body_handle: u32) -> Vec<f32> {
+    let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
 
-        if let Some(body) = self.rigid_body_set.get(handle) {
-            let quat = body.rotation().quaternion();
-            vec![quat.i, quat.j, quat.k, quat.w]
-        } else {
-            vec![0.0, 0.0, 0.0, 1.0]
-        }
+    if let Some(body) = self.rigid_body_set.get(handle) {
+        let quat = body.rotation().quaternion();
+        vec![quat.i, quat.j, quat.k, quat.w]
+    } else {
+        vec![0.0, 0.0, 0.0, 1.0]
+    }
+}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn avbd_params_are_applied_and_clamped() {
+        let mut world = RapierWorld::new(0.0, -9.81, 0.0, true);
+
+        // Intentionally pass a zero iteration count to verify clamping to at least 1.
+        world.set_avbd_params(0, 0.42, 7.5, 0.85, 3.0, 30.0, 1.0e-5);
+
+        let params = world.get_avbd_params();
+        eprintln!("avbd params after set_avbd_params: {:?}", params);
+
+        assert_eq!(params.len(), 7, "expected full parameter vector");
+        assert!(
+            (params[0] - 1.0).abs() < 1.0e-6,
+            "iterations should clamp to >= 1, got {}",
+            params[0]
+        );
+        assert!((params[1] - 0.42).abs() < 1.0e-6, "alpha not applied correctly");
+        assert!((params[2] - 7.5).abs() < 1.0e-6, "beta not applied correctly");
+        assert!((params[3] - 0.85).abs() < 1.0e-6, "gamma not applied correctly");
+        assert!((params[4] - 3.0).abs() < 1.0e-6, "stiffness min not applied correctly");
+        assert!((params[5] - 30.0).abs() < 1.0e-6, "stiffness max not applied correctly");
+        assert!(
+            (params[6] - 1.0e-5).abs() < 1.0e-9,
+            "regularization not applied correctly"
+        );
     }
 }

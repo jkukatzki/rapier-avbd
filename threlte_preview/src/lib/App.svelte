@@ -1,6 +1,6 @@
 <script lang="ts">
-	import Scene from "./Scene.svelte";
-	import { Pane, Button, Slider, Folder, Separator, Stepper } from "svelte-tweakpane-ui";
+import Scene from "./Scene.svelte";
+import { Pane, Button, Slider, Folder, Separator, Stepper, Element } from "svelte-tweakpane-ui";
 	import { Canvas } from "@threlte/core";
 	import { simulationState, triggerRegen } from "./sharedState.svelte";
 
@@ -12,20 +12,36 @@
 	<Slider
 		label="Bodies per Solver"
 		min={20}
-		max={1000}
+    max={2000}
 		step={10}
 		bind:value={simulationState.numberOfObjects}
 	/>
-	{#if isDev}
-		<Separator />
-		<Folder title="AVBD Solver (dev)" expanded={false}>
-			<Stepper
-				label="Iterations"
-				min={1}
-				max={32}
-				step={1}
-				bind:value={simulationState.avbd.iterations}
-			/>
+	<Folder title="Gravity" expanded={false}>
+		<Slider
+			label="AVBD Gravity Scale"
+			min={-10}
+			max={10}
+			step={0.1}
+			bind:value={simulationState.gravityScale.avbd}
+		/>
+		<Slider
+			label="Impulse Gravity Scale"
+			min={-10}
+			max={10}
+			step={0.1}
+			bind:value={simulationState.gravityScale.impulse}
+		/>
+	</Folder>
+    {#if isDev}
+        <Separator />
+        <Folder title="AVBD Solver (dev)" expanded={false}>
+            <Stepper
+                label="Iterations"
+                min={0}
+                max={32}
+                step={1}
+                bind:value={simulationState.avbd.iterations}
+            />
 			<Slider
 				label="Alpha"
 				min={0}
@@ -64,12 +80,25 @@
 			<Stepper
 				label="Regularization"
 				min={0}
-				max={0.01}
-				step={0.000001}
-				bind:value={simulationState.avbd.regularization}
-			/>
-		</Folder>
-	{/if}
+                max={0.01}
+                step={0.000001}
+                bind:value={simulationState.avbd.regularization}
+            />
+            <Separator />
+            <Element>
+                <div class="avbd-report">
+                    <strong>Applied Parameters</strong>
+                    <span>iterations: {simulationState.avbdReport.iterations}</span>
+                    <span>alpha: {simulationState.avbdReport.alpha.toFixed(3)}</span>
+                    <span>beta: {simulationState.avbdReport.beta.toFixed(2)}</span>
+                    <span>gamma: {simulationState.avbdReport.gamma.toFixed(3)}</span>
+                    <span>stiffness min: {simulationState.avbdReport.stiffnessMin.toFixed(2)}</span>
+                    <span>stiffness max: {simulationState.avbdReport.stiffnessMax.toFixed(2)}</span>
+                    <span>regularization: {simulationState.avbdReport.regularization}</span>
+                </div>
+            </Element>
+        </Folder>
+    {/if}
 </Pane>
 
 <div class="viewport">
@@ -79,9 +108,20 @@
 </div>
 
 <style>
-	.viewport {
-		width: 100vw;
-		height: 100vh;
-		z-index: 100;
-	}
+    .viewport {
+        width: 100vw;
+        height: 100vh;
+        z-index: 100;
+    }
+
+    .avbd-report {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+    }
+
+    .avbd-report strong {
+        font-size: 13px;
+    }
 </style>

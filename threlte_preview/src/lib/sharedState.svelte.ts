@@ -2,6 +2,19 @@
 export const simulationState = $state({
 	numberOfObjects: 60,
 	regen: false,
+	gravityScale: {
+		avbd: 1,
+		impulse: 1
+	},
+	avbdReport: {
+		iterations: 0,
+		alpha: 0,
+		beta: 0,
+		gamma: 0,
+		stiffnessMin: 0,
+		stiffnessMax: 0,
+		regularization: 0
+	},
 	avbd: {
 		iterations: 4,
 		alpha: 0.95,

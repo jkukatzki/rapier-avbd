@@ -5,6 +5,7 @@
 		AmbientLight,
 		BoxGeometry,
 		DirectionalLight,
+		InstancedBufferAttribute,
 		InstancedMesh,
 		MeshStandardMaterial,
 		Object3D,
@@ -12,7 +13,7 @@
 	} from "three";
 	import { Gizmo, OrbitControls } from "@threlte/extras";
 
-	const MAX_INSTANCES = 200;
+	const MAX_INSTANCES = 2000;
 	const worldRoot = new Object3D();
 	const avbdRoot = new Object3D();
 	const impulseRoot = new Object3D();
@@ -33,14 +34,14 @@
 	});
 
 	const cubeMeshAvbd = new InstancedMesh(new BoxGeometry(1, 1, 1), cubeMaterialAvbd, MAX_INSTANCES);
-	const sphereMeshAvbd = new InstancedMesh(new SphereGeometry(0.6, 24, 24), sphereMaterialAvbd, MAX_INSTANCES);
+	const sphereMeshAvbd = new InstancedMesh(new SphereGeometry(1, 24, 24), sphereMaterialAvbd, MAX_INSTANCES);
 	const cubeMeshImpulse = new InstancedMesh(
-		new BoxGeometry(3, 3, 3),
+		new BoxGeometry(1.1, 1.1, 1.1),
 		cubeMaterialImpulse,
 		MAX_INSTANCES
 	);
 	const sphereMeshImpulse = new InstancedMesh(
-		new SphereGeometry(0.6, 24, 24),
+		new SphereGeometry(1.1, 24, 24),
 		sphereMaterialImpulse,
 		MAX_INSTANCES
 	);
@@ -70,26 +71,45 @@
 	let lastRegenValue = simulationState.regen;
 
 	function setupGround(world: any) {
-		const groundHandle = world.create_fixed_body(0, -6, 0);
-		world.create_cuboid_collider(groundHandle, 50, 2, 50);
+		const groundHandle = world.create_fixed_body(0, 0, 0);
+		world.create_cuboid_collider(groundHandle, 50, 0.1, 50);
 	}
 
-	function clearHandles() {
-		cubeHandlesAvbd.length = 0;
-		sphereHandlesAvbd.length = 0;
-		cubeHandlesImpulse.length = 0;
-		sphereHandlesImpulse.length = 0;
+function clearHandles() {
+	cubeHandlesAvbd.length = 0;
+	sphereHandlesAvbd.length = 0;
+	cubeHandlesImpulse.length = 0;
+	sphereHandlesImpulse.length = 0;
 		updateInstances(cubeMeshAvbd, cubeHandlesAvbd, worldAvbd);
 		updateInstances(sphereMeshAvbd, sphereHandlesAvbd, worldAvbd);
 		updateInstances(cubeMeshImpulse, cubeHandlesImpulse, worldImpulse);
-		updateInstances(sphereMeshImpulse, sphereHandlesImpulse, worldImpulse);
-	}
+	updateInstances(sphereMeshImpulse, sphereHandlesImpulse, worldImpulse);
+}
 
-	function applyAvbdParams() {
-		if (!worldAvbd) return;
-		const params = simulationState.avbd;
-		worldAvbd.set_avbd_params(
-			params.iterations,
+function refreshGravityScales() {
+	if (!worldAvbd || !worldImpulse) return;
+	const avbdScale = simulationState.gravityScale.avbd;
+	const impulseScale = simulationState.gravityScale.impulse;
+
+	for (const handle of cubeHandlesAvbd) {
+		worldAvbd.set_body_gravity_scale(handle, avbdScale);
+	}
+	for (const handle of sphereHandlesAvbd) {
+		worldAvbd.set_body_gravity_scale(handle, avbdScale);
+	}
+	for (const handle of cubeHandlesImpulse) {
+		worldImpulse.set_body_gravity_scale(handle, impulseScale);
+	}
+	for (const handle of sphereHandlesImpulse) {
+		worldImpulse.set_body_gravity_scale(handle, impulseScale);
+	}
+}
+
+function applyAvbdParams() {
+	if (!worldAvbd) return;
+	const params = simulationState.avbd;
+	worldAvbd.set_avbd_params(
+		params.iterations,
 			params.alpha,
 			params.beta,
 			params.gamma,
@@ -123,44 +143,58 @@
 			const z = (Math.random() - 0.5) * spread;
 
 			const handleAvbd = worldAvbd.create_dynamic_body(x, y, z);
-			worldAvbd.create_cuboid_collider(handleAvbd, 0.5, 0.5, 0.5);
+			worldAvbd.create_cuboid_collider(handleAvbd, 1, 1, 1);
 			cubeHandlesAvbd.push(handleAvbd);
 
 			const handleImpulse = worldImpulse.create_dynamic_body(x, y, z);
-			worldImpulse.create_cuboid_collider(handleImpulse, 0.5, 0.5, 0.5);
+			worldImpulse.create_cuboid_collider(handleImpulse, 1, 1, 1);
 			cubeHandlesImpulse.push(handleImpulse);
 		}
 
-		for (let i = 0; i < sphereCount; i++) {
-			const x = (Math.random() - 0.5) * spread;
-			const y = 8 + Math.random() * 6;
-			const z = (Math.random() - 0.5) * spread;
+	for (let i = 0; i < sphereCount; i++) {
+		const x = (Math.random() - 0.5) * spread;
+		const y = 8 + Math.random() * 6;
+		const z = (Math.random() - 0.5) * spread;
 
-			const handleAvbd = worldAvbd.create_dynamic_body(x, y, z);
-			worldAvbd.create_ball_collider(handleAvbd, 0.6);
-			sphereHandlesAvbd.push(handleAvbd);
+		const handleAvbd = worldAvbd.create_dynamic_body(x, y, z);
+		worldAvbd.create_ball_collider(handleAvbd, 1);
+		sphereHandlesAvbd.push(handleAvbd);
 
-			const handleImpulse = worldImpulse.create_dynamic_body(x, y, z);
-			worldImpulse.create_ball_collider(handleImpulse, 0.6);
-			sphereHandlesImpulse.push(handleImpulse);
-		}
+		const handleImpulse = worldImpulse.create_dynamic_body(x, y, z);
+		worldImpulse.create_ball_collider(handleImpulse, 1);
+		sphereHandlesImpulse.push(handleImpulse);
+	}
 
-		updateInstances(cubeMeshAvbd, cubeHandlesAvbd, worldAvbd);
-		updateInstances(sphereMeshAvbd, sphereHandlesAvbd, worldAvbd);
-		updateInstances(cubeMeshImpulse, cubeHandlesImpulse, worldImpulse);
-		updateInstances(sphereMeshImpulse, sphereHandlesImpulse, worldImpulse);
-		lastSpawnCount = count;
+	refreshGravityScales();
+
+	updateInstances(cubeMeshAvbd, cubeHandlesAvbd, worldAvbd);
+	updateInstances(sphereMeshAvbd, sphereHandlesAvbd, worldAvbd);
+	updateInstances(cubeMeshImpulse, cubeHandlesImpulse, worldImpulse);
+	updateInstances(sphereMeshImpulse, sphereHandlesImpulse, worldImpulse);
+	lastSpawnCount = count;
 	}
 
 	function updateInstances(mesh: InstancedMesh, handles: number[], world: any) {
-		mesh.count = handles.length;
+		const capacity =
+			(mesh.instanceMatrix as InstancedBufferAttribute | undefined)?.count ??
+			mesh.count ??
+			MAX_INSTANCES;
+		const instanceCount = Math.min(handles.length, capacity);
+		mesh.count = instanceCount;
 
-		if (!world || handles.length === 0) {
+		if (!world || instanceCount === 0) {
 			mesh.instanceMatrix.needsUpdate = true;
+			if (handles.length > capacity) {
+				console.warn(
+					`[Scene] Instanced mesh capacity exceeded; skipping ${
+						handles.length - capacity
+					} instances.`,
+				);
+			}
 			return;
 		}
 
-		for (let i = 0; i < handles.length; i++) {
+		for (let i = 0; i < instanceCount; i++) {
 			const translation = world.get_body_translation(handles[i]);
 			const rotation = world.get_body_rotation(handles[i]);
 
@@ -177,6 +211,12 @@
 		}
 
 		mesh.instanceMatrix.needsUpdate = true;
+
+		if (handles.length > capacity) {
+			console.warn(
+				`[Scene] Instanced mesh capacity exceeded; rendering capped at ${capacity} instances.`,
+			);
+		}
 	}
 
 	useTask(() => {
@@ -240,17 +280,55 @@
 			regularization
 		} = simulationState.avbd;
 
-		if (!worldAvbd) return;
-		worldAvbd.set_avbd_params(
-			iterations,
-			alpha,
-			beta,
-			gamma,
-			stiffnessMin,
-			stiffnessMax,
-			regularization
+	if (!worldAvbd) return;
+	worldAvbd.set_avbd_params(
+		iterations,
+		alpha,
+		beta,
+		gamma,
+		stiffnessMin,
+		stiffnessMax,
+		regularization
+	);
+
+	const paramsReport =
+		typeof worldAvbd.get_avbd_params === "function"
+			? worldAvbd.get_avbd_params()
+			: null;
+	if (paramsReport && paramsReport.length === 7) {
+		const [iter, alphaApplied, betaApplied, gammaApplied, stiffMin, stiffMax, reg] =
+			paramsReport;
+		console.log(
+			`[AVBD params] iterations=${iter}, alpha=${alphaApplied.toFixed(
+				3
+			)}, beta=${betaApplied.toFixed(2)}, gamma=${gammaApplied.toFixed(
+				3
+			)}, stiffnessMin=${stiffMin.toFixed(2)}, stiffnessMax=${stiffMax.toFixed(
+				2
+			)}, regularization=${reg}`
 		);
-	});
+		simulationState.avbdReport = {
+			iterations: iter,
+			alpha: alphaApplied,
+			beta: betaApplied,
+			gamma: gammaApplied,
+			stiffnessMin: stiffMin,
+			stiffnessMax: stiffMax,
+			regularization: reg
+		};
+	} else if (!paramsReport) {
+		console.warn("[AVBD params] get_avbd_params() unavailable; rebuild WASM package?");
+	}
+});
+
+$effect(() => {
+	if (!worldsReady) return;
+	const { avbd, impulse } = simulationState.gravityScale;
+	// Touch the values to register reactivity, then refresh.
+	void avbd;
+	void impulse;
+	refreshGravityScales();
+});
 
 	// Watch for regen changes
 	$effect(() => {
@@ -274,8 +352,8 @@
 <T.AmbientLight args={[0xffffff, 0.7]} />
 <T.DirectionalLight args={[0xffffff, 1.1]} position={[6, 12, 6]} castShadow={true} />
 
-<T.Mesh position={[0, -7, 0]}>
-	<T.BoxGeometry args={[80, 2, 80]} />
+<T.Mesh position={[0, 0, 0]}>
+	<T.BoxGeometry args={[80, 0.1, 80]} />
 	<T.MeshStandardMaterial color="#5f5f5f" />
 </T.Mesh>
 

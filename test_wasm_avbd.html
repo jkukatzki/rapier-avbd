@@ -97,6 +97,57 @@
             font-size: 24px;
             font-weight: bold;
         }
+        .controls {
+            margin: 25px 0;
+            padding: 20px;
+            background: #eef5ff;
+            border-radius: 6px;
+            border: 1px solid #d0e2ff;
+        }
+        .controls h3 {
+            margin-top: 0;
+            color: #3a4a6b;
+        }
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px 16px;
+            margin-bottom: 15px;
+        }
+        .control-grid label {
+            display: flex;
+            flex-direction: column;
+            font-size: 13px;
+            color: #374151;
+        }
+        .control-grid input,
+        .controls textarea,
+        .controls select {
+            margin-top: 6px;
+            padding: 8px;
+            border: 1px solid #cbd5f5;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        .controls textarea {
+            resize: vertical;
+        }
+        .controls .subheading {
+            margin: 15px 0 8px;
+            font-weight: bold;
+            color: #334155;
+        }
+        .applied-display {
+            font-size: 13px;
+            background: white;
+            border: 1px solid #d0e2ff;
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 10px;
+            line-height: 1.4;
+            font-family: "Courier New", monospace;
+        }
     </style>
 </head>
 <body>
@@ -105,6 +156,65 @@
         
         <div id="status" class="status info">
             Loading WASM module...
+        </div>
+
+        <div class="controls">
+            <h3>AVBD Parameter Controls</h3>
+            <div class="control-grid">
+                <label>
+                    Iterations
+                    <input type="number" id="avbd-iterations" min="0" value="4">
+                </label>
+                <label>
+                    Alpha
+                    <input type="number" id="avbd-alpha" min="0" max="1" step="0.01" value="0.95">
+                </label>
+                <label>
+                    Beta
+                    <input type="number" id="avbd-beta" min="1" step="0.5" value="10">
+                </label>
+                <label>
+                    Gamma
+                    <input type="number" id="avbd-gamma" min="0" max="1" step="0.01" value="0.99">
+                </label>
+                <label>
+                    Stiffness Min
+                    <input type="number" id="avbd-stiffness-min" min="0" step="0.1" value="1">
+                </label>
+                <label>
+                    Stiffness Max
+                    <input type="number" id="avbd-stiffness-max" min="0" step="100" value="1000000">
+                </label>
+                <label>
+                    Regularization
+                    <input type="number" id="avbd-regularization" min="0" step="0.000001" value="0.000001">
+                </label>
+            </div>
+            <button id="applyAvbdParams" disabled>Apply AVBD Parameters</button>
+            <div id="avbdAppliedDisplay" class="applied-display" style="display:none;"></div>
+
+            <div class="subheading">Automated Sweeps</div>
+            <label>
+                Iteration values (comma separated)
+                <input type="text" id="avbd-iteration-sweep" value="1,2,4,8,12">
+            </label>
+            <label>
+                Custom parameter sets (one per line, e.g. <code>iterations=6,beta=12,gamma=0.9</code>)
+                <textarea id="avbd-config-sweep" rows="4" placeholder="iterations=4,alpha=0.95,beta=10&#10;iterations=8,alpha=0.9,beta=12"></textarea>
+            </label>
+            <label>
+                Sweep body count
+                <select id="sweep-body-count">
+                    <option value="100">100 bodies</option>
+                    <option value="250">250 bodies</option>
+                    <option value="500">500 bodies</option>
+                    <option value="1000" selected>1000 bodies</option>
+                </select>
+            </label>
+            <div>
+                <button id="runIterationSweep" disabled>Run Iteration Sweep</button>
+                <button id="runConfigSweep" disabled>Run Config Sweep</button>
+            </div>
         </div>
 
         <div id="metrics" style="display: none;">
@@ -222,6 +332,7 @@
         let stepCountImpulse = 0;
         let lastAvbdMetrics = zeroMetrics();
         let lastImpulseMetrics = zeroMetrics();
+        let avbdAppliedParams = null;
 
         function log(message, type = 'info') {
             const output = document.getElementById('output');
@@ -320,6 +431,75 @@
             updateMetrics();
         }
 
+        function collectAvbdFormValues() {
+            return {
+                iterations: parseInt(document.getElementById('avbd-iterations').value, 10) || 0,
+                alpha: parseFloat(document.getElementById('avbd-alpha').value) || 0,
+                beta: parseFloat(document.getElementById('avbd-beta').value) || 0,
+                gamma: parseFloat(document.getElementById('avbd-gamma').value) || 0,
+                stiffnessMin: parseFloat(document.getElementById('avbd-stiffness-min').value) || 0,
+                stiffnessMax: parseFloat(document.getElementById('avbd-stiffness-max').value) || 0,
+                regularization: parseFloat(document.getElementById('avbd-regularization').value) || 0,
+            };
+        }
+
+        function updateAvbdAppliedDisplay(params) {
+            const display = document.getElementById('avbdAppliedDisplay');
+            if (!params) {
+                display.style.display = 'none';
+                return;
+            }
+            display.style.display = 'block';
+            display.innerHTML = `
+                iterations: ${params.iterations}<br>
+                alpha: ${params.alpha.toFixed(3)} | beta: ${params.beta.toFixed(2)} | gamma: ${params.gamma.toFixed(3)}<br>
+                stiffness min: ${params.stiffnessMin.toFixed(3)} | stiffness max: ${params.stiffnessMax.toFixed(3)}<br>
+                regularization: ${params.regularization.toExponential(3)}
+            `;
+        }
+
+        function applyAvbdParamsFromUI(shouldLog = true) {
+            if (!worldAVBD) return null;
+            const values = collectAvbdFormValues();
+            worldAVBD.set_avbd_params(
+                values.iterations,
+                values.alpha,
+                values.beta,
+                values.gamma,
+                values.stiffnessMin,
+                values.stiffnessMax,
+                values.regularization
+            );
+            const applied = worldAVBD.get_avbd_params();
+            if (applied && applied.length === 7) {
+                avbdAppliedParams = {
+                    iterations: applied[0],
+                    alpha: applied[1],
+                    beta: applied[2],
+                    gamma: applied[3],
+                    stiffnessMin: applied[4],
+                    stiffnessMax: applied[5],
+                    regularization: applied[6],
+                };
+                updateAvbdAppliedDisplay(avbdAppliedParams);
+                if (shouldLog) {
+                    log(
+                        `✅ Applied AVBD params → iterations=${avbdAppliedParams.iterations}, alpha=${avbdAppliedParams.alpha.toFixed(
+                            3
+                        )}, beta=${avbdAppliedParams.beta.toFixed(2)}, gamma=${avbdAppliedParams.gamma.toFixed(
+                            3
+                        )}, stiffness=[${avbdAppliedParams.stiffnessMin.toFixed(3)}, ${avbdAppliedParams.stiffnessMax.toFixed(
+                            3
+                        )}], regularization=${avbdAppliedParams.regularization}`,
+                        'success'
+                    );
+                }
+            } else if (shouldLog) {
+                log('⚠️ Unable to read back AVBD parameters (is WASM package up to date?)', 'error');
+            }
+            return avbdAppliedParams;
+        }
+
         function updateMetrics() {
             if (worldAVBD) {
                 document.getElementById('solver-type').textContent = worldAVBD.get_solver_backend();
@@ -389,10 +569,14 @@
                 document.getElementById('stepOnce').disabled = false;
                 document.getElementById('runBenchmark100').disabled = false;
                 document.getElementById('runBenchmark1000').disabled = false;
+                document.getElementById('applyAvbdParams').disabled = false;
+                document.getElementById('runIterationSweep').disabled = false;
+                document.getElementById('runConfigSweep').disabled = false;
                 document.getElementById('metrics').style.display = 'block';
                 document.getElementById('impulse-metrics').style.display = 'block';
 
                 resetSimulationState();
+                applyAvbdParamsFromUI(false);
 
             } catch (error) {
                 log(`Failed to initialize: ${error.message}`, 'error');
@@ -401,7 +585,7 @@
             }
         }
 
-        function createTestScene(world, worldName, bodyCount) {
+        function createTestScene(world, worldName, bodyCount, logger = log) {
             const handles = [];
             const grid = Math.ceil(Math.cbrt(bodyCount));
             const spacing = 1.5;
@@ -432,16 +616,20 @@
                 handles.push(bodyHandle);
             }
 
-            log(`${worldName}: Created ${world.num_bodies()} bodies, ${world.num_colliders()} colliders`, 'success');
+            logger(`${worldName}: Created ${world.num_bodies()} bodies, ${world.num_colliders()} colliders`, 'success');
             return handles;
         }
 
-        function summarizeBenchmarkResults(label, totalMs, avgMetrics) {
-            log(`🔹 ${label}:`, 'info');
-            log(`   Total time: ${totalMs.toFixed(2)}ms`, 'info');
-            log(`   Average per step: ${avgMetrics.total.toFixed(3)}ms`, 'info');
-            log(`   Steps per second: ${formatFrequency(avgMetrics.total)} Hz`, 'info');
-            logMetrics(`   ${label} phase breakdown`, avgMetrics);
+        function summarizeBenchmarkResults(label, totalMs, avgMetrics, logger = log) {
+            logger(`🔹 ${label}:`, 'info');
+            logger(`   Total time: ${totalMs.toFixed(2)}ms`, 'info');
+            logger(`   Average per step: ${avgMetrics.total.toFixed(3)}ms`, 'info');
+            logger(`   Steps per second: ${formatFrequency(avgMetrics.total)} Hz`, 'info');
+            const metricsLine =
+                `${label} phase breakdown: total=${avgMetrics.total.toFixed(3)}ms | collision=${avgMetrics.collision.toFixed(3)}ms | ` +
+                `island=${avgMetrics.island.toFixed(3)}ms | solver=${avgMetrics.solver.toFixed(3)}ms (assembly=${avgMetrics.assembly.toFixed(3)}ms, ` +
+                `resolution=${avgMetrics.resolution.toFixed(3)}ms, writeback=${avgMetrics.writeback.toFixed(3)}ms)`;
+            logger(metricsLine, 'info');
         }
 
         function computeImprovementPercent(impulseTotal, avbdTotal) {
@@ -451,86 +639,251 @@
             return ((impulseTotal - avbdTotal) / impulseTotal) * 100.0;
         }
 
-        function runBenchmarkWithBodies(bodyCount) {
-            if (!worldAVBD || !worldImpulse) return;
-
-            log(`🏁 Starting benchmark with ${bodyCount} bodies and ${bodyCount} colliders...`, 'info');
-            log('═'.repeat(60), 'info');
-
-            try {
-                resetSimulationState();
-
-                log('Setting up AVBD world...', 'info');
-                const avbdHandles = createTestScene(worldAVBD, 'AVBD', bodyCount);
-
-                log('Setting up Impulse world...', 'info');
-                const impulseHandles = createTestScene(worldImpulse, 'Impulse', bodyCount);
-
-                updateMetrics();
-
-                const steps = bodyCount >= 1000 ? 120 : 100;
-                log(`Running ${steps} simulation steps...`, 'info');
-
-                const avbdSum = zeroMetrics();
-                for (let i = 0; i < steps; i++) {
-                    const metrics = metricsFromWasm(worldAVBD.step_with_metrics());
-                    accumulateMetrics(avbdSum, metrics);
-                    lastAvbdMetrics = metrics;
-                    stepCountAVBD++;
-                }
-
-                const impulseSum = zeroMetrics();
-                for (let i = 0; i < steps; i++) {
-                    const metrics = metricsFromWasm(worldImpulse.step_with_metrics());
-                    accumulateMetrics(impulseSum, metrics);
-                    lastImpulseMetrics = metrics;
-                    stepCountImpulse++;
-                }
-
-                const avbdTotal = avbdSum.total;
-                const impulseTotal = impulseSum.total;
-                const avbdAvg = scaleMetrics(avbdSum, 1 / steps);
-                const impulseAvg = scaleMetrics(impulseSum, 1 / steps);
-                lastAvbdMetrics = avbdAvg;
-                lastImpulseMetrics = impulseAvg;
-
-                updateMetrics();
-
-                log('═'.repeat(60), 'info');
-                log(`📊 BENCHMARK RESULTS (${bodyCount} bodies, ${steps} steps):`, 'success');
-                log('═'.repeat(60), 'info');
-
-                summarizeBenchmarkResults('AVBD Solver', avbdTotal, avbdAvg);
-                summarizeBenchmarkResults('Impulse Solver', impulseTotal, impulseAvg);
-
-                const improvement = computeImprovementPercent(impulseTotal, avbdTotal);
-                if (improvement !== null) {
-                    if (improvement > 0.0) {
-                        log(`✨ AVBD is ${improvement.toFixed(1)}% faster than Impulse`, 'success');
-                    } else if (improvement < 0.0) {
-                        log(`⚠️ AVBD is ${Math.abs(improvement).toFixed(1)}% slower than Impulse`, 'info');
-                    } else {
-                        log('⚖️ Both solvers performed equally', 'info');
-                    }
-                }
-
-                log('═'.repeat(60), 'info');
-
-                const avbdPos = worldAVBD.get_body_translation(avbdHandles[0]);
-                const impulsePos = worldImpulse.get_body_translation(impulseHandles[0]);
-                log(`First body final positions:`, 'info');
-                log(`  AVBD:    [${avbdPos[0].toFixed(2)}, ${avbdPos[1].toFixed(2)}, ${avbdPos[2].toFixed(2)}]`, 'info');
-                log(`  Impulse: [${impulsePos[0].toFixed(2)}, ${impulsePos[1].toFixed(2)}, ${impulsePos[2].toFixed(2)}]`, 'info');
-
-                updateMetrics();
-            } catch (error) {
-                log(`Benchmark failed: ${error.message}`, 'error');
-                console.error('Full error:', error);
+        function executeBenchmark(bodyCount, steps, logger = log) {
+            if (!worldAVBD || !worldImpulse) {
+                throw new Error('Worlds are not initialized');
             }
+
+            const applyResult = applyAvbdParamsFromUI(false);
+            if (logger) {
+                logger(`🏁 Starting benchmark with ${bodyCount} bodies (steps=${steps})...`, 'info');
+            }
+
+            resetSimulationState();
+
+            const logFn = logger || (() => {});
+
+            logFn('Setting up AVBD world...', 'info');
+            const avbdHandles = createTestScene(worldAVBD, 'AVBD', bodyCount, logFn);
+
+            logFn('Setting up Impulse world...', 'info');
+            const impulseHandles = createTestScene(worldImpulse, 'Impulse', bodyCount, logFn);
+
+            updateMetrics();
+
+            const avbdSum = zeroMetrics();
+            const impulseSum = zeroMetrics();
+
+            logFn('Running simulation steps...', 'info');
+
+            for (let i = 0; i < steps; i++) {
+                const metrics = metricsFromWasm(worldAVBD.step_with_metrics());
+                accumulateMetrics(avbdSum, metrics);
+                lastAvbdMetrics = metrics;
+                stepCountAVBD++;
+            }
+
+            for (let i = 0; i < steps; i++) {
+                const metrics = metricsFromWasm(worldImpulse.step_with_metrics());
+                accumulateMetrics(impulseSum, metrics);
+                lastImpulseMetrics = metrics;
+                stepCountImpulse++;
+            }
+
+            const avbdTotal = avbdSum.total;
+            const impulseTotal = impulseSum.total;
+            const avbdAvg = scaleMetrics(avbdSum, 1 / steps);
+            const impulseAvg = scaleMetrics(impulseSum, 1 / steps);
+            lastAvbdMetrics = avbdAvg;
+            lastImpulseMetrics = impulseAvg;
+
+            updateMetrics();
+
+            const improvement = computeImprovementPercent(impulseTotal, avbdTotal);
+            const avbdPos = avbdHandles.length ? worldAVBD.get_body_translation(avbdHandles[0]) : [0, 0, 0];
+            const impulsePos = impulseHandles.length ? worldImpulse.get_body_translation(impulseHandles[0]) : [0, 0, 0];
+
+            return {
+                bodyCount,
+                steps,
+                avbdTotal,
+                impulseTotal,
+                avbdAvg,
+                impulseAvg,
+                improvement,
+                avbdSamplePosition: avbdPos,
+                impulseSamplePosition: impulsePos,
+                appliedParams: applyResult,
+            };
         }
 
-        document.getElementById('runBenchmark100').addEventListener('click', () => runBenchmarkWithBodies(100));
-        document.getElementById('runBenchmark1000').addEventListener('click', () => runBenchmarkWithBodies(1000));
+        function runBenchmarkWithBodies(bodyCount, options = {}) {
+            const { steps: explicitSteps, label } = options;
+            const steps = explicitSteps ?? (bodyCount >= 1000 ? 120 : 100);
+
+            const summary = executeBenchmark(bodyCount, steps, log);
+
+            log('═'.repeat(60), 'info');
+            const headline = label ? `📊 BENCHMARK RESULTS ${label}` : `📊 BENCHMARK RESULTS (${bodyCount} bodies, ${steps} steps)`;
+            log(headline, 'success');
+            log('═'.repeat(60), 'info');
+
+            summarizeBenchmarkResults('AVBD Solver', summary.avbdTotal, summary.avbdAvg, log);
+            summarizeBenchmarkResults('Impulse Solver', summary.impulseTotal, summary.impulseAvg, log);
+
+            if (summary.improvement !== null) {
+                if (summary.improvement > 0.0) {
+                    log(`✨ AVBD is ${summary.improvement.toFixed(1)}% faster than Impulse`, 'success');
+                } else if (summary.improvement < 0.0) {
+                    log(`⚠️ AVBD is ${Math.abs(summary.improvement).toFixed(1)}% slower than Impulse`, 'info');
+                } else {
+                    log('⚖️ Both solvers performed equally', 'info');
+                }
+            }
+
+            log(`   Sample body heights → AVBD: ${summary.avbdSamplePosition[1].toFixed(3)}, Impulse: ${summary.impulseSamplePosition[1].toFixed(3)}`, 'info');
+            log('═'.repeat(60), 'info');
+
+            return summary;
+        }
+
+        function setAvbdFormValues(values) {
+            if (values.iterations !== undefined) document.getElementById('avbd-iterations').value = values.iterations;
+            if (values.alpha !== undefined) document.getElementById('avbd-alpha').value = values.alpha;
+            if (values.beta !== undefined) document.getElementById('avbd-beta').value = values.beta;
+            if (values.gamma !== undefined) document.getElementById('avbd-gamma').value = values.gamma;
+            if (values.stiffnessMin !== undefined) document.getElementById('avbd-stiffness-min').value = values.stiffnessMin;
+            if (values.stiffnessMax !== undefined) document.getElementById('avbd-stiffness-max').value = values.stiffnessMax;
+            if (values.regularization !== undefined) document.getElementById('avbd-regularization').value = values.regularization;
+        }
+
+        function formatSweepSummary(prefix, summary) {
+            return `${prefix} | AVBD avg=${summary.avbdAvg.total.toFixed(3)}ms, Impulse avg=${summary.impulseAvg.total.toFixed(3)}ms, improvement=${summary.improvement === null ? 'n/a' : summary.improvement.toFixed(2) + '%'}`;
+        }
+
+        function runIterationSweep() {
+            if (!worldAVBD || !worldImpulse) return;
+            const raw = document.getElementById('avbd-iteration-sweep').value;
+            const values = raw
+                .split(/[,\s]+/)
+                .map((v) => parseInt(v.trim(), 10))
+                .filter((v) => Number.isFinite(v) && v >= 0);
+
+            if (!values.length) {
+                log('⚠️ No iteration values provided for sweep.', 'error');
+                return;
+            }
+
+            const bodyCount = parseInt(document.getElementById('sweep-body-count').value, 10) || 100;
+            const steps = bodyCount >= 1000 ? 120 : 100;
+
+            log(`🧪 Iteration sweep over [${values.join(', ')}] with ${bodyCount} bodies`, 'info');
+
+            const baseValues = collectAvbdFormValues();
+            values.forEach((iterValue) => {
+                setAvbdFormValues({ ...baseValues, iterations: iterValue });
+                log(`→ Running iteration ${iterValue}`, 'info');
+                const prefix = `iterations=${iterValue}`;
+                const summary = executeBenchmark(
+                    bodyCount,
+                    steps,
+                    (msg, type = 'info') => {
+                        if (type === 'error') {
+                            log(`[${prefix}] ${msg}`, type);
+                        }
+                    }
+                );
+                log(formatSweepSummary(`[${prefix}]`, summary), summary.improvement > 0 ? 'success' : 'info');
+            });
+
+            // Restore original form state
+            setAvbdFormValues(baseValues);
+            applyAvbdParamsFromUI(false);
+            log('✅ Iteration sweep complete.', 'success');
+        }
+
+        function parseConfigLine(line, baseValues) {
+            const config = { ...baseValues };
+            const pairs = line.split(',');
+            pairs.forEach((pair) => {
+                const [rawKey, rawValue] = pair.split('=').map((s) => s && s.trim());
+                if (!rawKey || rawValue === undefined) return;
+                const key = rawKey.toLowerCase();
+                const value = parseFloat(rawValue);
+                if (!Number.isFinite(value)) return;
+                switch (key) {
+                    case 'iterations':
+                        config.iterations = value;
+                        break;
+                    case 'alpha':
+                        config.alpha = value;
+                        break;
+                    case 'beta':
+                        config.beta = value;
+                        break;
+                    case 'gamma':
+                        config.gamma = value;
+                        break;
+                    case 'stiffnessmin':
+                    case 'stiffness_min':
+                        config.stiffnessMin = value;
+                        break;
+                    case 'stiffnessmax':
+                    case 'stiffness_max':
+                        config.stiffnessMax = value;
+                        break;
+                    case 'regularization':
+                        config.regularization = value;
+                        break;
+                    default:
+                        break;
+                }
+            });
+            return config;
+        }
+
+        function runConfigSweep() {
+            if (!worldAVBD || !worldImpulse) return;
+            const rawText = document.getElementById('avbd-config-sweep').value;
+            const lines = rawText
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+
+            if (!lines.length) {
+                log('⚠️ No custom parameter sets provided.', 'error');
+                return;
+            }
+
+            const bodyCount = parseInt(document.getElementById('sweep-body-count').value, 10) || 100;
+            const steps = bodyCount >= 1000 ? 120 : 100;
+            const baseValues = collectAvbdFormValues();
+
+            log(`🧪 Running ${lines.length} custom AVBD configurations with ${bodyCount} bodies`, 'info');
+
+            lines.forEach((line, index) => {
+                const config = parseConfigLine(line, baseValues);
+                setAvbdFormValues(config);
+                log(`→ Running config ${index + 1}: ${line}`, 'info');
+                const prefix = `config#${index + 1}`;
+                const summary = executeBenchmark(
+                    bodyCount,
+                    steps,
+                    (msg, type = 'info') => {
+                        if (type === 'error') {
+                            log(`[${prefix}] ${msg}`, type);
+                        }
+                    }
+                );
+                log(formatSweepSummary(`[${prefix}] ${line}`, summary), summary.improvement > 0 ? 'success' : 'info');
+            });
+
+            setAvbdFormValues(baseValues);
+            applyAvbdParamsFromUI(false);
+            log('✅ Config sweep complete.', 'success');
+        }
+
+        document.getElementById('runBenchmark100').addEventListener('click', () => {
+            applyAvbdParamsFromUI();
+            runBenchmarkWithBodies(100);
+        });
+        document.getElementById('runBenchmark1000').addEventListener('click', () => {
+            applyAvbdParamsFromUI();
+            runBenchmarkWithBodies(1000);
+        });
+        document.getElementById('applyAvbdParams').addEventListener('click', () => applyAvbdParamsFromUI());
+        document.getElementById('runIterationSweep').addEventListener('click', runIterationSweep);
+        document.getElementById('runConfigSweep').addEventListener('click', runConfigSweep);
 
         document.getElementById('runTest').addEventListener('click', () => {
             if (!worldAVBD) return;
@@ -538,6 +891,7 @@
             log('Running simulation test...', 'info');
 
             try {
+                applyAvbdParamsFromUI(false);
                 resetSimulationState();
 
                 // Create a ground plane (fixed body with a cuboid collider)
@@ -594,6 +948,7 @@
             if (!worldAVBD) return;
 
             try {
+                applyAvbdParamsFromUI(false);
                 const avbdMetrics = metricsFromWasm(worldAVBD.step_with_metrics());
                 stepCountAVBD++;
                 lastAvbdMetrics = avbdMetrics;
