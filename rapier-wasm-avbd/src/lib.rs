@@ -1,5 +1,68 @@
 use wasm_bindgen::prelude::*;
-use rapier3d::prelude::*;
+use rapier3d::{counters::Counters, prelude::*};
+
+#[wasm_bindgen]
+pub struct StepMetrics {
+    total_ms: f64,
+    collision_ms: f64,
+    island_ms: f64,
+    solver_ms: f64,
+    solver_assembly_ms: f64,
+    solver_resolution_ms: f64,
+    solver_writeback_ms: f64,
+}
+
+impl StepMetrics {
+    fn from_counters(counters: &Counters) -> Self {
+        Self {
+            total_ms: counters.step_time_ms(),
+            collision_ms: counters.collision_detection_time_ms(),
+            island_ms: counters.island_construction_time_ms(),
+            solver_ms: counters.solver_time_ms(),
+            solver_assembly_ms: counters.solver.velocity_assembly_time.time_ms(),
+            solver_resolution_ms: counters.solver.velocity_resolution_time.time_ms(),
+            solver_writeback_ms: counters.solver.velocity_writeback_time.time_ms(),
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl StepMetrics {
+    #[wasm_bindgen(getter)]
+    pub fn total_ms(&self) -> f64 {
+        self.total_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn collision_ms(&self) -> f64 {
+        self.collision_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn island_ms(&self) -> f64 {
+        self.island_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn solver_ms(&self) -> f64 {
+        self.solver_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn solver_assembly_ms(&self) -> f64 {
+        self.solver_assembly_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn solver_resolution_ms(&self) -> f64 {
+        self.solver_resolution_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn solver_writeback_ms(&self) -> f64 {
+        self.solver_writeback_ms
+    }
+}
 
 #[wasm_bindgen]
 pub fn init_panic_hook() {
@@ -72,7 +135,24 @@ impl RapierWorld {
             &(),
         );
     }
-    
+
+    pub fn step_with_metrics(&mut self) -> StepMetrics {
+        self.step();
+        StepMetrics::from_counters(&self.physics_pipeline.counters)
+    }
+
+    pub fn reset(&mut self) {
+        self.islands = IslandManager::new();
+        self.broad_phase = DefaultBroadPhase::new();
+        self.narrow_phase = NarrowPhase::new();
+        self.impulse_joint_set = ImpulseJointSet::new();
+        self.multibody_joint_set = MultibodyJointSet::new();
+        self.ccd_solver = CCDSolver::new();
+        self.rigid_body_set = RigidBodySet::new();
+        self.collider_set = ColliderSet::new();
+        self.physics_pipeline.counters.reset();
+    }
+
     pub fn num_bodies(&self) -> usize {
         self.rigid_body_set.len()
     }
@@ -83,6 +163,23 @@ impl RapierWorld {
     
     pub fn get_solver_backend(&self) -> String {
         format!("{:?}", self.integration_parameters.solver_backend)
+    }
+
+    pub fn solver_iterations(&self) -> u32 {
+        self.integration_parameters.num_solver_iterations as u32
+    }
+
+    pub fn set_solver_iterations(&mut self, iterations: u32) {
+        self.integration_parameters.num_solver_iterations = iterations.max(1) as usize;
+    }
+
+    pub fn warmstart_coefficient(&self) -> f32 {
+        self.integration_parameters.warmstart_coefficient as f32
+    }
+
+    pub fn set_warmstart_coefficient(&mut self, value: f32) {
+        let clamped = value.clamp(0.0, 1.0);
+        self.integration_parameters.warmstart_coefficient = clamped as Real;
     }
     
     /// Create a dynamic rigid body and return its handle

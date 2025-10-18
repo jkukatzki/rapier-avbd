@@ -123,8 +123,36 @@
                 <div class="metric-label">Steps</div>
                 <div class="metric-value" id="step-count">0</div>
             </div>
+            <div class="metric">
+                <div class="metric-label">Last Step (ms)</div>
+                <div class="metric-value" id="avbd-step-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Collision (ms)</div>
+                <div class="metric-value" id="avbd-collision-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Island Build (ms)</div>
+                <div class="metric-value" id="avbd-island-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Solver (ms)</div>
+                <div class="metric-value" id="avbd-solver-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Assembly (ms)</div>
+                <div class="metric-value" id="avbd-assembly-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Resolution (ms)</div>
+                <div class="metric-value" id="avbd-resolution-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Writeback (ms)</div>
+                <div class="metric-value" id="avbd-writeback-ms">0.000</div>
+            </div>
         </div>
-        
+
         <div id="impulse-metrics" style="display: none;">
             <h3>Impulse Solver World (Default)</h3>
             <div class="metric">
@@ -142,6 +170,34 @@
             <div class="metric">
                 <div class="metric-label">Steps</div>
                 <div class="metric-value" id="impulse-step-count">0</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Last Step (ms)</div>
+                <div class="metric-value" id="impulse-step-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Collision (ms)</div>
+                <div class="metric-value" id="impulse-collision-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Island Build (ms)</div>
+                <div class="metric-value" id="impulse-island-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Solver (ms)</div>
+                <div class="metric-value" id="impulse-solver-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Assembly (ms)</div>
+                <div class="metric-value" id="impulse-assembly-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Resolution (ms)</div>
+                <div class="metric-value" id="impulse-resolution-ms">0.000</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Writeback (ms)</div>
+                <div class="metric-value" id="impulse-writeback-ms">0.000</div>
             </div>
         </div>
 
@@ -161,6 +217,8 @@
         let worldImpulse = null;
         let stepCountAVBD = 0;
         let stepCountImpulse = 0;
+        let lastAvbdMetrics = zeroMetrics();
+        let lastImpulseMetrics = zeroMetrics();
 
         function log(message, type = 'info') {
             const output = document.getElementById('output');
@@ -170,18 +228,109 @@
             output.scrollTop = output.scrollHeight;
         }
 
+        function zeroMetrics() {
+            return {
+                total: 0,
+                collision: 0,
+                island: 0,
+                solver: 0,
+                assembly: 0,
+                resolution: 0,
+                writeback: 0,
+            };
+        }
+
+        function metricsFromWasm(stepMetrics) {
+            const data = {
+                total: stepMetrics.total_ms(),
+                collision: stepMetrics.collision_ms(),
+                island: stepMetrics.island_ms(),
+                solver: stepMetrics.solver_ms(),
+                assembly: stepMetrics.solver_assembly_ms(),
+                resolution: stepMetrics.solver_resolution_ms(),
+                writeback: stepMetrics.solver_writeback_ms(),
+            };
+            stepMetrics.free();
+            return data;
+        }
+
+        function accumulateMetrics(target, sample) {
+            target.total += sample.total;
+            target.collision += sample.collision;
+            target.island += sample.island;
+            target.solver += sample.solver;
+            target.assembly += sample.assembly;
+            target.resolution += sample.resolution;
+            target.writeback += sample.writeback;
+        }
+
+        function scaleMetrics(source, factor) {
+            return {
+                total: source.total * factor,
+                collision: source.collision * factor,
+                island: source.island * factor,
+                solver: source.solver * factor,
+                assembly: source.assembly * factor,
+                resolution: source.resolution * factor,
+                writeback: source.writeback * factor,
+            };
+        }
+
+        function updateMetricValues(prefix, metrics) {
+            document.getElementById(`${prefix}-step-ms`).textContent = metrics.total.toFixed(3);
+            document.getElementById(`${prefix}-collision-ms`).textContent = metrics.collision.toFixed(3);
+            document.getElementById(`${prefix}-island-ms`).textContent = metrics.island.toFixed(3);
+            document.getElementById(`${prefix}-solver-ms`).textContent = metrics.solver.toFixed(3);
+            document.getElementById(`${prefix}-assembly-ms`).textContent = metrics.assembly.toFixed(3);
+            document.getElementById(`${prefix}-resolution-ms`).textContent = metrics.resolution.toFixed(3);
+            document.getElementById(`${prefix}-writeback-ms`).textContent = metrics.writeback.toFixed(3);
+        }
+
+        function logMetrics(label, metrics) {
+            log(
+                `${label}: total=${metrics.total.toFixed(3)}ms | collision=${metrics.collision.toFixed(3)}ms | ` +
+                    `island=${metrics.island.toFixed(3)}ms | solver=${metrics.solver.toFixed(3)}ms ` +
+                    `(assembly=${metrics.assembly.toFixed(3)}ms, resolution=${metrics.resolution.toFixed(3)}ms, ` +
+                    `writeback=${metrics.writeback.toFixed(3)}ms)`,
+                'info'
+            );
+        }
+
+        function formatFrequency(msPerStep) {
+            if (msPerStep <= 0) {
+                return '∞';
+            }
+            return (1000 / msPerStep).toFixed(0);
+        }
+
+        function resetSimulationState() {
+            if (worldAVBD) {
+                worldAVBD.reset();
+            }
+            if (worldImpulse) {
+                worldImpulse.reset();
+            }
+            stepCountAVBD = 0;
+            stepCountImpulse = 0;
+            lastAvbdMetrics = zeroMetrics();
+            lastImpulseMetrics = zeroMetrics();
+            updateMetrics();
+        }
+
         function updateMetrics() {
             if (worldAVBD) {
                 document.getElementById('solver-type').textContent = worldAVBD.get_solver_backend();
                 document.getElementById('body-count').textContent = worldAVBD.num_bodies();
                 document.getElementById('collider-count').textContent = worldAVBD.num_colliders();
                 document.getElementById('step-count').textContent = stepCountAVBD;
+                updateMetricValues('avbd', lastAvbdMetrics);
             }
             if (worldImpulse) {
                 document.getElementById('impulse-solver-type').textContent = worldImpulse.get_solver_backend();
                 document.getElementById('impulse-body-count').textContent = worldImpulse.num_bodies();
                 document.getElementById('impulse-collider-count').textContent = worldImpulse.num_colliders();
                 document.getElementById('impulse-step-count').textContent = stepCountImpulse;
+                updateMetricValues('impulse', lastImpulseMetrics);
             }
         }
 
@@ -216,23 +365,31 @@
                 worldAVBD = new RapierWorld(0.0, -9.81, 0.0, true);
                 log('Created Rapier world with AVBD solver', 'success');
                 log(`AVBD Solver backend: ${worldAVBD.get_solver_backend()}`, 'info');
-                
+
                 // Create world with default Impulse solver
                 worldImpulse = new RapierWorld(0.0, -9.81, 0.0, false);
                 log('Created Rapier world with Impulse solver', 'success');
                 log(`Impulse Solver backend: ${worldImpulse.get_solver_backend()}`, 'info');
-                
+
+                const solverIterations = worldAVBD.solver_iterations();
+                worldImpulse.set_solver_iterations(solverIterations);
+                log(`Aligned solver iterations for both worlds: ${solverIterations}`, 'info');
+
+                const warmstart = worldAVBD.warmstart_coefficient();
+                worldImpulse.set_warmstart_coefficient(warmstart);
+                log(`Aligned warmstart coefficient: ${warmstart.toFixed(2)}`, 'info');
+
                 setStatus('✅ Ready! Both solvers initialized', 'success');
-                
+
                 // Enable buttons
                 document.getElementById('runTest').disabled = false;
                 document.getElementById('stepOnce').disabled = false;
                 document.getElementById('runBenchmark').disabled = false;
                 document.getElementById('metrics').style.display = 'block';
                 document.getElementById('impulse-metrics').style.display = 'block';
-                
-                updateMetrics();
-                
+
+                resetSimulationState();
+
             } catch (error) {
                 log(`Failed to initialize: ${error.message}`, 'error');
                 setStatus(`❌ Failed to load: ${error.message}`, 'error');
@@ -242,17 +399,19 @@
 
         document.getElementById('runBenchmark').addEventListener('click', () => {
             if (!worldAVBD || !worldImpulse) return;
-            
+
             log('🏁 Starting benchmark with 100 bodies and 100 colliders...', 'info');
             log('═'.repeat(60), 'info');
-            
+
             try {
+                resetSimulationState();
+
                 // Helper function to create a test scene
                 function createTestScene(world, worldName) {
                     // Create ground
-                    const groundHandle = world.create_fixed_body(0.0, -5.0, 0.0);
+                    const groundHandle = world.create_fixed_body(0.0, 0.0, 0.0);
                     world.create_cuboid_collider(groundHandle, 50.0, 0.5, 50.0);
-                    
+
                     // Create 100 dynamic bodies with colliders
                     const handles = [];
                     for (let i = 0; i < 100; i++) {
@@ -283,48 +442,55 @@
                 const impulseHandles = createTestScene(worldImpulse, 'Impulse');
                 
                 updateMetrics();
-                
+
                 log('═'.repeat(60), 'info');
-                log('Running 100 simulation steps...', 'info');
-                
-                // Benchmark AVBD solver
-                const avbdStartTime = performance.now();
-                for (let i = 0; i < 100; i++) {
-                    worldAVBD.step();
+                const steps = 100;
+                log(`Running ${steps} simulation steps...`, 'info');
+
+                const avbdSum = zeroMetrics();
+                for (let i = 0; i < steps; i++) {
+                    const metrics = metricsFromWasm(worldAVBD.step_with_metrics());
+                    accumulateMetrics(avbdSum, metrics);
+                    lastAvbdMetrics = metrics;
                     stepCountAVBD++;
                 }
-                const avbdEndTime = performance.now();
-                const avbdTime = avbdEndTime - avbdStartTime;
-                const avbdAvgTime = avbdTime / 100;
-                
-                // Benchmark Impulse solver
-                const impulseStartTime = performance.now();
-                for (let i = 0; i < 100; i++) {
-                    worldImpulse.step();
+                const impulseSum = zeroMetrics();
+                for (let i = 0; i < steps; i++) {
+                    const metrics = metricsFromWasm(worldImpulse.step_with_metrics());
+                    accumulateMetrics(impulseSum, metrics);
+                    lastImpulseMetrics = metrics;
                     stepCountImpulse++;
                 }
-                const impulseEndTime = performance.now();
-                const impulseTime = impulseEndTime - impulseStartTime;
-                const impulseAvgTime = impulseTime / 100;
-                
+
+                const avbdTotal = avbdSum.total;
+                const impulseTotal = impulseSum.total;
+                const avbdAvg = scaleMetrics(avbdSum, 1 / steps);
+                const impulseAvg = scaleMetrics(impulseSum, 1 / steps);
+                lastAvbdMetrics = avbdAvg;
+                lastImpulseMetrics = impulseAvg;
+
+                updateMetrics();
+
                 log('═'.repeat(60), 'info');
                 log('📊 BENCHMARK RESULTS:', 'success');
                 log('═'.repeat(60), 'info');
-                
+
                 log(`🔷 AVBD Solver:`, 'info');
-                log(`   Total time: ${avbdTime.toFixed(2)}ms`, 'info');
-                log(`   Average per step: ${avbdAvgTime.toFixed(3)}ms`, 'info');
-                log(`   Steps per second: ${(1000 / avbdAvgTime).toFixed(0)} Hz`, 'info');
-                
+                log(`   Total time: ${avbdTotal.toFixed(2)}ms`, 'info');
+                log(`   Average per step: ${avbdAvg.total.toFixed(3)}ms`, 'info');
+                log(`   Steps per second: ${formatFrequency(avbdAvg.total)} Hz`, 'info');
+                logMetrics('   AVBD phase breakdown', avbdAvg);
+
                 log(`🔶 Impulse Solver:`, 'info');
-                log(`   Total time: ${impulseTime.toFixed(2)}ms`, 'info');
-                log(`   Average per step: ${impulseAvgTime.toFixed(3)}ms`, 'info');
-                log(`   Steps per second: ${(1000 / impulseAvgTime).toFixed(0)} Hz`, 'info');
-                
+                log(`   Total time: ${impulseTotal.toFixed(2)}ms`, 'info');
+                log(`   Average per step: ${impulseAvg.total.toFixed(3)}ms`, 'info');
+                log(`   Steps per second: ${formatFrequency(impulseAvg.total)} Hz`, 'info');
+                logMetrics('   Impulse phase breakdown', impulseAvg);
+
                 log('═'.repeat(60), 'info');
-                
+
                 // Calculate speedup/slowdown
-                const ratio = impulseTime / avbdTime;
+                const ratio = avbdTotal > 0 ? impulseTotal / avbdTotal : 1;
                 if (ratio > 1.0) {
                     const speedup = ((ratio - 1) * 100).toFixed(1);
                     log(`✨ AVBD is ${speedup}% FASTER than Impulse`, 'success');
@@ -354,16 +520,18 @@
 
         document.getElementById('runTest').addEventListener('click', () => {
             if (!worldAVBD) return;
-            
+
             log('Running simulation test...', 'info');
-            
+
             try {
+                resetSimulationState();
+
                 // Create a ground plane (fixed body with a cuboid collider)
                 log('Creating ground plane...', 'info');
-                const groundHandle = worldAVBD.create_fixed_body(0.0, -5.0, 0.0);
+                const groundHandle = worldAVBD.create_fixed_body(0.0, 0.0, 0.0);
                 worldAVBD.create_cuboid_collider(groundHandle, 50.0, 0.5, 50.0);
                 log(`Created ground body (handle: ${groundHandle})`, 'success');
-                
+
                 // Create several falling spheres
                 log('Creating falling spheres...', 'info');
                 const ballHandles = [];
@@ -377,26 +545,30 @@
                     ballHandles.push(bodyHandle);
                 }
                 log(`Created ${ballHandles.length} dynamic spheres`, 'success');
-                
+
                 updateMetrics();
-                
-                // Run 100 simulation steps
-                log('Running 100 simulation steps...', 'info');
-                const startTime = performance.now();
-                for (let i = 0; i < 100; i++) {
-                    worldAVBD.step();
+
+                const testSteps = 100;
+                log(`Running ${testSteps} simulation steps...`, 'info');
+                const avbdSum = zeroMetrics();
+                for (let i = 0; i < testSteps; i++) {
+                    const metrics = metricsFromWasm(worldAVBD.step_with_metrics());
+                    accumulateMetrics(avbdSum, metrics);
+                    lastAvbdMetrics = metrics;
                     stepCountAVBD++;
                 }
-                const endTime = performance.now();
-                
-                const avgTime = (endTime - startTime) / 100;
-                log(`Completed 100 steps in ${(endTime - startTime).toFixed(2)}ms`, 'success');
-                log(`Average: ${avgTime.toFixed(3)}ms per step`, 'info');
-                
+                const avbdTotal = avbdSum.total;
+                const avbdAvg = scaleMetrics(avbdSum, 1 / testSteps);
+                lastAvbdMetrics = avbdAvg;
+
+                log(`Completed ${testSteps} steps in ${avbdTotal.toFixed(2)}ms`, 'success');
+                log(`Average: ${avbdAvg.total.toFixed(3)}ms per step`, 'info');
+                logMetrics('   AVBD phase averages', avbdAvg);
+
                 // Show position of first ball after simulation
                 const pos = worldAVBD.get_body_translation(ballHandles[0]);
                 log(`First ball final position: [${pos[0].toFixed(2)}, ${pos[1].toFixed(2)}, ${pos[2].toFixed(2)}]`, 'info');
-                
+
                 updateMetrics();
             } catch (error) {
                 log(`Test failed: ${error.message}`, 'error');
@@ -406,15 +578,24 @@
 
         document.getElementById('stepOnce').addEventListener('click', () => {
             if (!worldAVBD) return;
-            
+
             try {
-                worldAVBD.step();
+                const avbdMetrics = metricsFromWasm(worldAVBD.step_with_metrics());
                 stepCountAVBD++;
+                lastAvbdMetrics = avbdMetrics;
+
+                let impulseMetrics = null;
                 if (worldImpulse) {
-                    worldImpulse.step();
+                    impulseMetrics = metricsFromWasm(worldImpulse.step_with_metrics());
                     stepCountImpulse++;
+                    lastImpulseMetrics = impulseMetrics;
                 }
+
                 log(`Step completed (AVBD: ${stepCountAVBD}, Impulse: ${stepCountImpulse})`, 'success');
+                logMetrics('   AVBD step metrics', avbdMetrics);
+                if (impulseMetrics) {
+                    logMetrics('   Impulse step metrics', impulseMetrics);
+                }
                 updateMetrics();
             } catch (error) {
                 log(`Step failed: ${error.message}`, 'error');
