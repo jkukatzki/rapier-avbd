@@ -61,13 +61,15 @@
             background: #ccc;
             cursor: not-allowed;
         }
-        #runBenchmark {
+        #runBenchmark100,
+        #runBenchmark1000 {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             font-weight: bold;
             font-size: 18px;
             padding: 15px 30px;
         }
-        #runBenchmark:hover {
+        #runBenchmark100:hover,
+        #runBenchmark1000:hover {
             background: linear-gradient(135deg, #5568d3 0%, #6a4391 100%);
         }
         #output {
@@ -202,7 +204,8 @@
         </div>
 
         <div>
-            <button id="runBenchmark" disabled>🏁 Run Benchmark (100 Bodies)</button>
+            <button id="runBenchmark100" disabled>🏁 Run Benchmark (100 Bodies)</button>
+            <button id="runBenchmark1000" disabled>🏁 Run Benchmark (1000 Bodies)</button>
             <button id="runTest" disabled>Run Simple Test</button>
             <button id="stepOnce" disabled>Step Once</button>
             <button id="clearOutput">Clear Output</button>
@@ -384,7 +387,8 @@
                 // Enable buttons
                 document.getElementById('runTest').disabled = false;
                 document.getElementById('stepOnce').disabled = false;
-                document.getElementById('runBenchmark').disabled = false;
+                document.getElementById('runBenchmark100').disabled = false;
+                document.getElementById('runBenchmark1000').disabled = false;
                 document.getElementById('metrics').style.display = 'block';
                 document.getElementById('impulse-metrics').style.display = 'block';
 
@@ -397,54 +401,74 @@
             }
         }
 
-        document.getElementById('runBenchmark').addEventListener('click', () => {
+        function createTestScene(world, worldName, bodyCount) {
+            const handles = [];
+            const grid = Math.ceil(Math.cbrt(bodyCount));
+            const spacing = 1.5;
+
+            const groundHandle = world.create_fixed_body(0.0, 0.0, 0.0);
+            const groundHalfExtent = Math.max(50.0, grid * spacing);
+            world.create_cuboid_collider(groundHandle, groundHalfExtent, 0.5, groundHalfExtent);
+
+            const layerSize = grid * grid;
+            for (let i = 0; i < bodyCount; i++) {
+                const layer = Math.floor(i / layerSize);
+                const indexInLayer = i % layerSize;
+                const row = Math.floor(indexInLayer / grid);
+                const col = indexInLayer % grid;
+
+                const x = (col - (grid - 1) / 2) * spacing;
+                const z = (row - (grid - 1) / 2) * spacing;
+                const y = 2.0 + layer * spacing;
+
+                const bodyHandle = world.create_dynamic_body(x, y, z);
+
+                if ((row + col + layer) % 2 === 0) {
+                    world.create_ball_collider(bodyHandle, 0.5);
+                } else {
+                    world.create_cuboid_collider(bodyHandle, 0.5, 0.5, 0.5);
+                }
+
+                handles.push(bodyHandle);
+            }
+
+            log(`${worldName}: Created ${world.num_bodies()} bodies, ${world.num_colliders()} colliders`, 'success');
+            return handles;
+        }
+
+        function summarizeBenchmarkResults(label, totalMs, avgMetrics) {
+            log(`🔹 ${label}:`, 'info');
+            log(`   Total time: ${totalMs.toFixed(2)}ms`, 'info');
+            log(`   Average per step: ${avgMetrics.total.toFixed(3)}ms`, 'info');
+            log(`   Steps per second: ${formatFrequency(avgMetrics.total)} Hz`, 'info');
+            logMetrics(`   ${label} phase breakdown`, avgMetrics);
+        }
+
+        function computeImprovementPercent(impulseTotal, avbdTotal) {
+            if (impulseTotal <= 0 || avbdTotal <= 0) {
+                return null;
+            }
+            return ((impulseTotal - avbdTotal) / impulseTotal) * 100.0;
+        }
+
+        function runBenchmarkWithBodies(bodyCount) {
             if (!worldAVBD || !worldImpulse) return;
 
-            log('🏁 Starting benchmark with 100 bodies and 100 colliders...', 'info');
+            log(`🏁 Starting benchmark with ${bodyCount} bodies and ${bodyCount} colliders...`, 'info');
             log('═'.repeat(60), 'info');
 
             try {
                 resetSimulationState();
 
-                // Helper function to create a test scene
-                function createTestScene(world, worldName) {
-                    // Create ground
-                    const groundHandle = world.create_fixed_body(0.0, 0.0, 0.0);
-                    world.create_cuboid_collider(groundHandle, 50.0, 0.5, 50.0);
-
-                    // Create 100 dynamic bodies with colliders
-                    const handles = [];
-                    for (let i = 0; i < 100; i++) {
-                        const x = (Math.random() - 0.5) * 20.0;
-                        const y = 5.0 + (i % 10) * 3.0;
-                        const z = (Math.random() - 0.5) * 20.0;
-                        
-                        const bodyHandle = world.create_dynamic_body(x, y, z);
-                        
-                        // Alternate between balls and boxes
-                        if (i % 2 === 0) {
-                            world.create_ball_collider(bodyHandle, 0.5);
-                        } else {
-                            world.create_cuboid_collider(bodyHandle, 0.5, 0.5, 0.5);
-                        }
-                        handles.push(bodyHandle);
-                    }
-                    
-                    log(`${worldName}: Created ${world.num_bodies()} bodies, ${world.num_colliders()} colliders`, 'success');
-                    return handles;
-                }
-                
-                // Create scenes for both worlds
                 log('Setting up AVBD world...', 'info');
-                const avbdHandles = createTestScene(worldAVBD, 'AVBD');
-                
+                const avbdHandles = createTestScene(worldAVBD, 'AVBD', bodyCount);
+
                 log('Setting up Impulse world...', 'info');
-                const impulseHandles = createTestScene(worldImpulse, 'Impulse');
-                
+                const impulseHandles = createTestScene(worldImpulse, 'Impulse', bodyCount);
+
                 updateMetrics();
 
-                log('═'.repeat(60), 'info');
-                const steps = 100;
+                const steps = bodyCount >= 1000 ? 120 : 100;
                 log(`Running ${steps} simulation steps...`, 'info');
 
                 const avbdSum = zeroMetrics();
@@ -454,6 +478,7 @@
                     lastAvbdMetrics = metrics;
                     stepCountAVBD++;
                 }
+
                 const impulseSum = zeroMetrics();
                 for (let i = 0; i < steps; i++) {
                     const metrics = metricsFromWasm(worldImpulse.step_with_metrics());
@@ -472,51 +497,40 @@
                 updateMetrics();
 
                 log('═'.repeat(60), 'info');
-                log('📊 BENCHMARK RESULTS:', 'success');
+                log(`📊 BENCHMARK RESULTS (${bodyCount} bodies, ${steps} steps):`, 'success');
                 log('═'.repeat(60), 'info');
 
-                log(`🔷 AVBD Solver:`, 'info');
-                log(`   Total time: ${avbdTotal.toFixed(2)}ms`, 'info');
-                log(`   Average per step: ${avbdAvg.total.toFixed(3)}ms`, 'info');
-                log(`   Steps per second: ${formatFrequency(avbdAvg.total)} Hz`, 'info');
-                logMetrics('   AVBD phase breakdown', avbdAvg);
+                summarizeBenchmarkResults('AVBD Solver', avbdTotal, avbdAvg);
+                summarizeBenchmarkResults('Impulse Solver', impulseTotal, impulseAvg);
 
-                log(`🔶 Impulse Solver:`, 'info');
-                log(`   Total time: ${impulseTotal.toFixed(2)}ms`, 'info');
-                log(`   Average per step: ${impulseAvg.total.toFixed(3)}ms`, 'info');
-                log(`   Steps per second: ${formatFrequency(impulseAvg.total)} Hz`, 'info');
-                logMetrics('   Impulse phase breakdown', impulseAvg);
-
-                log('═'.repeat(60), 'info');
-
-                // Calculate speedup/slowdown
-                const ratio = avbdTotal > 0 ? impulseTotal / avbdTotal : 1;
-                if (ratio > 1.0) {
-                    const speedup = ((ratio - 1) * 100).toFixed(1);
-                    log(`✨ AVBD is ${speedup}% FASTER than Impulse`, 'success');
-                } else if (ratio < 1.0) {
-                    const slowdown = ((1 / ratio - 1) * 100).toFixed(1);
-                    log(`⚠️ AVBD is ${slowdown}% slower than Impulse`, 'info');
-                } else {
-                    log('⚖️ Both solvers performed equally', 'info');
+                const improvement = computeImprovementPercent(impulseTotal, avbdTotal);
+                if (improvement !== null) {
+                    if (improvement > 0.0) {
+                        log(`✨ AVBD is ${improvement.toFixed(1)}% faster than Impulse`, 'success');
+                    } else if (improvement < 0.0) {
+                        log(`⚠️ AVBD is ${Math.abs(improvement).toFixed(1)}% slower than Impulse`, 'info');
+                    } else {
+                        log('⚖️ Both solvers performed equally', 'info');
+                    }
                 }
-                
+
                 log('═'.repeat(60), 'info');
-                
-                // Check final positions
+
                 const avbdPos = worldAVBD.get_body_translation(avbdHandles[0]);
                 const impulsePos = worldImpulse.get_body_translation(impulseHandles[0]);
                 log(`First body final positions:`, 'info');
                 log(`  AVBD:    [${avbdPos[0].toFixed(2)}, ${avbdPos[1].toFixed(2)}, ${avbdPos[2].toFixed(2)}]`, 'info');
                 log(`  Impulse: [${impulsePos[0].toFixed(2)}, ${impulsePos[1].toFixed(2)}, ${impulsePos[2].toFixed(2)}]`, 'info');
-                
+
                 updateMetrics();
-                
             } catch (error) {
                 log(`Benchmark failed: ${error.message}`, 'error');
                 console.error('Full error:', error);
             }
-        });
+        }
+
+        document.getElementById('runBenchmark100').addEventListener('click', () => runBenchmarkWithBodies(100));
+        document.getElementById('runBenchmark1000').addEventListener('click', () => runBenchmarkWithBodies(1000));
 
         document.getElementById('runTest').addEventListener('click', () => {
             if (!worldAVBD) return;

@@ -1,0 +1,3 @@
+packages:
+  - rapier-wasm-avbd/pkg
+  - threlte_preview
