@@ -80,23 +80,36 @@ impl AvbdSolver {
             return;
         }
 
-        let mut gradients = Vec::with_capacity(handles.len());
-        let mut minv_gradients = Vec::with_capacity(handles.len());
-        let mut entries = Vec::with_capacity(handles.len());
+        let workspace = &mut self.workspace;
 
-        for handle in handles.iter().copied() {
-            if let Some(entry_index) = self.workspace.body_map.get(&handle).copied() {
-                let mut grad = [0.0; AVBD_DOF];
-                constraint.gradient(bodies, handle, &mut grad);
-                let minv_grad = self.workspace.mass_inverse(entry_index, &grad);
-                gradients.push(grad);
-                minv_gradients.push(minv_grad);
-                entries.push(entry_index);
+        {
+            let gradients = &mut workspace.gradients;
+            let entries = &mut workspace.entries;
+
+            gradients.clear();
+            entries.clear();
+
+            for handle in handles.iter().copied() {
+                if let Some(entry_index) = workspace.body_map.get(&handle).copied() {
+                    let mut grad = [0.0; AVBD_DOF];
+                    constraint.gradient(bodies, handle, &mut grad);
+                    gradients.push(grad);
+                    entries.push(entry_index);
+                }
             }
         }
 
-        if entries.is_empty() {
+        if workspace.entries.is_empty() {
             return;
+        }
+
+        workspace
+            .minv_gradients
+            .resize(workspace.entries.len(), [0.0; AVBD_DOF]);
+        for i in 0..workspace.entries.len() {
+            let entry_index = workspace.entries[i];
+            let grad = workspace.gradients[i];
+            workspace.minv_gradients[i] = workspace.mass_inverse(entry_index, &grad);
         }
 
         let compliance = {
@@ -109,7 +122,11 @@ impl AvbdSolver {
         };
 
         let mut denominator = compliance;
-        for (grad, minv_grad) in gradients.iter().zip(minv_gradients.iter()) {
+        for (grad, minv_grad) in workspace
+            .gradients
+            .iter()
+            .zip(workspace.minv_gradients.iter())
+        {
             let mut acc = 0.0;
             for i in 0..AVBD_DOF {
                 acc += grad[i] * minv_grad[i];
@@ -132,13 +149,14 @@ impl AvbdSolver {
             (delta_lambda, updated_lambda, updated_stiffness)
         };
 
-        for (entry_index, minv_grad) in entries.iter().zip(minv_gradients.iter()) {
+        for i in 0..workspace.entries.len() {
+            let entry_index = workspace.entries[i];
+            let minv_grad = workspace.minv_gradients[i];
             let mut delta = [0.0; AVBD_DOF];
             for i in 0..AVBD_DOF {
                 delta[i] = minv_grad[i] * delta_lambda;
             }
-            self.workspace
-                .apply_body_delta(*entry_index, &delta, bodies);
+            workspace.apply_body_delta(entry_index, &delta, bodies);
         }
 
         let state = constraint.state_mut();
@@ -160,6 +178,9 @@ fn clamp_stiffness(value: Real, params: &AvbdSolverParams) -> Real {
 struct SolverWorkspace {
     body_map: HashMap<RigidBodyHandle, usize>,
     bodies: Vec<BodyEntry>,
+    gradients: Vec<[Real; AVBD_DOF]>,
+    minv_gradients: Vec<[Real; AVBD_DOF]>,
+    entries: Vec<usize>,
 }
 
 impl SolverWorkspace {
