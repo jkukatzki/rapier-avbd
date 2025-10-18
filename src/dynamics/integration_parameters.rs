@@ -1,6 +1,9 @@
 use crate::math::Real;
 use na::RealField;
 
+#[cfg(feature = "serde-serialize")]
+use serde::{Deserialize, Serialize};
+
 #[cfg(doc)]
 use super::RigidBodyActivation;
 
@@ -28,6 +31,23 @@ pub enum FrictionModel {
     ///
     /// This results in one Coulomb friction constraint per contact point.
     Coulomb,
+}
+
+/// Solver backend selection.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+pub enum SolverBackend {
+    /// The classic sequential impulse / PGS solver currently used by Rapier.
+    Impulse,
+    /// Experimental Augmented Vertex Block Descent backend.
+    #[cfg(feature = "solver_avbd")]
+    Avbd,
+}
+
+impl Default for SolverBackend {
+    fn default() -> Self {
+        Self::Impulse
+    }
 }
 
 /// Configuration parameters that control the physics simulation quality and behavior.
@@ -151,6 +171,8 @@ pub struct IntegrationParameters {
     /// - `8-12`: Use for demanding scenarios (stacks of objects, complex machinery)
     /// - `1-2`: Use if performance is critical and accuracy can be sacrificed
     pub num_solver_iterations: usize,
+    /// Selects the solver backend used for constraints resolution.
+    pub solver_backend: SolverBackend,
     /// Number of internal Project Gauss Seidel (PGS) iterations run at each solver iteration (default: `1`).
     pub num_internal_pgs_iterations: usize,
     /// The number of stabilization iterations run at each solver iterations (default: `1`).
@@ -334,6 +356,7 @@ impl Default for IntegrationParameters {
             num_internal_pgs_iterations: 1,
             num_internal_stabilization_iterations: 1,
             num_solver_iterations: 4,
+            solver_backend: SolverBackend::default(),
             // TODO: what is the optimal value for min_island_size?
             // It should not be too big so that we don't end up with
             // huge islands that don't fit in cache.

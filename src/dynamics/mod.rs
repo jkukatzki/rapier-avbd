@@ -2,7 +2,7 @@
 
 pub use self::ccd::CCDSolver;
 pub use self::coefficient_combine_rule::CoefficientCombineRule;
-pub use self::integration_parameters::IntegrationParameters;
+pub use self::integration_parameters::{IntegrationParameters, SolverBackend};
 pub use self::island_manager::IslandManager;
 
 #[cfg(feature = "dim3")]
@@ -17,6 +17,8 @@ pub(crate) use self::rigid_body_set::ModifiedRigidBodies;
 pub(crate) use self::solver::IslandSolver;
 // #[cfg(feature = "parallel")]
 // pub(crate) use self::solver::ParallelIslandSolver;
+#[cfg(feature = "solver_avbd")]
+pub use self::solver::{AvbdConstraint, AvbdConstraintState, AvbdSolver, AvbdSolverParams};
 pub use parry::mass_properties::MassProperties;
 
 pub use self::rigid_body::{RigidBody, RigidBodyBuilder};
