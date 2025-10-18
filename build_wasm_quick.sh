@@ -61,7 +61,7 @@ EOF
 # Create basic lib.rs with AVBD-enabled world - dimension specific
 echo "📝 Creating lib.rs..."
 if [ "$DIM" = "3" ]; then
-    cat "$RAPIER_ROOT/rapier-wasm-avbd/src/lib.rs" > "$WASM_DIR/src/lib.rs"
+    echo "ℹ️ Using existing 3D bindings in rapier-wasm-avbd/src/lib.rs"
 else
 # 2D version
 cat > "$WASM_DIR/src/lib.rs" << 'EOFLIB'
@@ -110,37 +110,30 @@ impl StepMetrics {
 
 #[wasm_bindgen]
 impl StepMetrics {
-    #[wasm_bindgen(getter)]
     pub fn total_ms(&self) -> f64 {
         self.total_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn collision_ms(&self) -> f64 {
         self.collision_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn island_ms(&self) -> f64 {
         self.island_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn solver_ms(&self) -> f64 {
         self.solver_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn solver_assembly_ms(&self) -> f64 {
         self.solver_assembly_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn solver_resolution_ms(&self) -> f64 {
         self.solver_resolution_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn solver_writeback_ms(&self) -> f64 {
         self.solver_writeback_ms
     }
@@ -303,6 +296,13 @@ impl RapierWorld {
     }
 }
 EOFLIB
+fi
+
+echo "🧪 Running Rust AVBD smoke benchmarks before building..."
+if [ "$DIM" = "3" ]; then
+    (cd "$RAPIER_ROOT" && cargo test -p rapier3d --features solver_avbd --test avbd_bench -- --nocapture)
+else
+    echo "ℹ️ Skipping solver benchmarks for 2D build (AVBD 2D backend under development)."
 fi
 
 cd "$WASM_DIR"

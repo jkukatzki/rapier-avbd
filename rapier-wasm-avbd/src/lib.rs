@@ -1,5 +1,21 @@
-use wasm_bindgen::prelude::*;
 use rapier3d::{counters::Counters, prelude::*};
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
+pub fn init_panic_hook() {
+    console_error_panic_hook::set_once();
+}
+
+#[wasm_bindgen]
+pub fn version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[wasm_bindgen]
+pub fn is_avbd_available() -> bool {
+    // The build script always enables the solver_avbd feature for rapier3d.
+    true
+}
 
 #[wasm_bindgen]
 pub struct StepMetrics {
@@ -28,55 +44,33 @@ impl StepMetrics {
 
 #[wasm_bindgen]
 impl StepMetrics {
-    #[wasm_bindgen(getter)]
     pub fn total_ms(&self) -> f64 {
         self.total_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn collision_ms(&self) -> f64 {
         self.collision_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn island_ms(&self) -> f64 {
         self.island_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn solver_ms(&self) -> f64 {
         self.solver_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn solver_assembly_ms(&self) -> f64 {
         self.solver_assembly_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn solver_resolution_ms(&self) -> f64 {
         self.solver_resolution_ms
     }
 
-    #[wasm_bindgen(getter)]
     pub fn solver_writeback_ms(&self) -> f64 {
         self.solver_writeback_ms
     }
-}
-
-#[wasm_bindgen]
-pub fn init_panic_hook() {
-    console_error_panic_hook::set_once();
-}
-
-#[wasm_bindgen]
-pub fn version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
-}
-
-#[wasm_bindgen]
-pub fn is_avbd_available() -> bool {
-    true // Always true since solver_avbd is enabled in Cargo.toml
 }
 
 #[wasm_bindgen]
@@ -99,11 +93,11 @@ impl RapierWorld {
     #[wasm_bindgen(constructor)]
     pub fn new(gravity_x: f32, gravity_y: f32, gravity_z: f32, use_avbd: bool) -> RapierWorld {
         let mut integration_parameters = IntegrationParameters::default();
-        
+
         if use_avbd {
             integration_parameters.solver_backend = SolverBackend::Avbd;
         }
-        
+
         RapierWorld {
             physics_pipeline: PhysicsPipeline::new(),
             integration_parameters,
@@ -118,7 +112,7 @@ impl RapierWorld {
             gravity: Vector::new(gravity_x, gravity_y, gravity_z),
         }
     }
-    
+
     pub fn step(&mut self) {
         self.physics_pipeline.step(
             &self.gravity,
@@ -156,11 +150,11 @@ impl RapierWorld {
     pub fn num_bodies(&self) -> usize {
         self.rigid_body_set.len()
     }
-    
+
     pub fn num_colliders(&self) -> usize {
         self.collider_set.len()
     }
-    
+
     pub fn get_solver_backend(&self) -> String {
         format!("{:?}", self.integration_parameters.solver_backend)
     }
@@ -181,8 +175,7 @@ impl RapierWorld {
         let clamped = value.clamp(0.0, 1.0);
         self.integration_parameters.warmstart_coefficient = clamped as Real;
     }
-    
-    /// Create a dynamic rigid body and return its handle
+
     pub fn create_dynamic_body(&mut self, x: f32, y: f32, z: f32) -> u32 {
         let rigid_body = RigidBodyBuilder::dynamic()
             .translation(Vector::new(x, y, z))
@@ -190,8 +183,7 @@ impl RapierWorld {
         let handle = self.rigid_body_set.insert(rigid_body);
         handle.into_raw_parts().0
     }
-    
-    /// Create a fixed (static) rigid body and return its handle
+
     pub fn create_fixed_body(&mut self, x: f32, y: f32, z: f32) -> u32 {
         let rigid_body = RigidBodyBuilder::fixed()
             .translation(Vector::new(x, y, z))
@@ -199,32 +191,31 @@ impl RapierWorld {
         let handle = self.rigid_body_set.insert(rigid_body);
         handle.into_raw_parts().0
     }
-    
-    /// Create a ball collider attached to a rigid body
+
     pub fn create_ball_collider(&mut self, body_handle: u32, radius: f32) -> u32 {
         let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
         let collider = ColliderBuilder::ball(radius).build();
-        let collider_handle = self.collider_set.insert_with_parent(
-            collider,
-            handle,
-            &mut self.rigid_body_set,
-        );
+        let collider_handle =
+            self.collider_set
+                .insert_with_parent(collider, handle, &mut self.rigid_body_set);
         collider_handle.into_raw_parts().0
     }
-    
-    /// Create a cuboid collider attached to a rigid body
-    pub fn create_cuboid_collider(&mut self, body_handle: u32, hx: f32, hy: f32, hz: f32) -> u32 {
+
+    pub fn create_cuboid_collider(
+        &mut self,
+        body_handle: u32,
+        hx: f32,
+        hy: f32,
+        hz: f32,
+    ) -> u32 {
         let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
         let collider = ColliderBuilder::cuboid(hx, hy, hz).build();
-        let collider_handle = self.collider_set.insert_with_parent(
-            collider,
-            handle,
-            &mut self.rigid_body_set,
-        );
+        let collider_handle =
+            self.collider_set
+                .insert_with_parent(collider, handle, &mut self.rigid_body_set);
         collider_handle.into_raw_parts().0
     }
-    
-    /// Get the translation (position) of a rigid body
+
     pub fn get_body_translation(&self, body_handle: u32) -> Vec<f32> {
         let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
         if let Some(body) = self.rigid_body_set.get(handle) {
