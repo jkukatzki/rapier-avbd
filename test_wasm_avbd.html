@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rapier AVBD WASM Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .status {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #runBenchmark {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-weight: bold;
+            font-size: 18px;
+            padding: 15px 30px;
+        }
+        #runBenchmark:hover {
+            background: linear-gradient(135deg, #5568d3 0%, #6a4391 100%);
+        }
+        #output {
+            background: #f8f9fa;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .metric {
+            display: inline-block;
+            margin: 10px 20px 10px 0;
+        }
+        .metric-label {
+            color: #666;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        .metric-value {
+            color: #333;
+            font-size: 24px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Rapier AVBD WASM Test</h1>
+        
+        <div id="status" class="status info">
+            Loading WASM module...
+        </div>
+
+        <div id="metrics" style="display: none;">
+            <h3>AVBD Solver World</h3>
+            <div class="metric">
+                <div class="metric-label">Solver Type</div>
+                <div class="metric-value" id="solver-type">-</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Bodies</div>
+                <div class="metric-value" id="body-count">0</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Colliders</div>
+                <div class="metric-value" id="collider-count">0</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Steps</div>
+                <div class="metric-value" id="step-count">0</div>
+            </div>
+        </div>
+        
+        <div id="impulse-metrics" style="display: none;">
+            <h3>Impulse Solver World (Default)</h3>
+            <div class="metric">
+                <div class="metric-label">Solver Type</div>
+                <div class="metric-value" id="impulse-solver-type">-</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Bodies</div>
+                <div class="metric-value" id="impulse-body-count">0</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Colliders</div>
+                <div class="metric-value" id="impulse-collider-count">0</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Steps</div>
+                <div class="metric-value" id="impulse-step-count">0</div>
+            </div>
+        </div>
+
+        <div>
+            <button id="runBenchmark" disabled>🏁 Run Benchmark (100 Bodies)</button>
+            <button id="runTest" disabled>Run Simple Test</button>
+            <button id="stepOnce" disabled>Step Once</button>
+            <button id="clearOutput">Clear Output</button>
+        </div>
+
+        <h3>Output:</h3>
+        <div id="output"></div>
+    </div>
+
+    <script type="module">
+        let worldAVBD = null;
+        let worldImpulse = null;
+        let stepCountAVBD = 0;
+        let stepCountImpulse = 0;
+
+        function log(message, type = 'info') {
+            const output = document.getElementById('output');
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+            output.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function updateMetrics() {
+            if (worldAVBD) {
+                document.getElementById('solver-type').textContent = worldAVBD.get_solver_backend();
+                document.getElementById('body-count').textContent = worldAVBD.num_bodies();
+                document.getElementById('collider-count').textContent = worldAVBD.num_colliders();
+                document.getElementById('step-count').textContent = stepCountAVBD;
+            }
+            if (worldImpulse) {
+                document.getElementById('impulse-solver-type').textContent = worldImpulse.get_solver_backend();
+                document.getElementById('impulse-body-count').textContent = worldImpulse.num_bodies();
+                document.getElementById('impulse-collider-count').textContent = worldImpulse.num_colliders();
+                document.getElementById('impulse-step-count').textContent = stepCountImpulse;
+            }
+        }
+
+        function setStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+
+        async function initWasm() {
+            try {
+                // Import the WASM module
+                const { default: init, RapierWorld, is_avbd_available, init_panic_hook } = 
+                    await import('./rapier-wasm-avbd/pkg/rapier_wasm_avbd.js');
+                
+                // Initialize WASM
+                await init();
+                init_panic_hook();
+                
+                log('WASM module loaded successfully', 'success');
+                
+                // Check AVBD availability
+                const avbdAvailable = is_avbd_available();
+                log(`AVBD solver available: ${avbdAvailable}`, avbdAvailable ? 'success' : 'error');
+                
+                if (!avbdAvailable) {
+                    setStatus('⚠️ AVBD solver not available - was it compiled with solver_avbd feature?', 'error');
+                    return;
+                }
+                
+                // Create world with AVBD solver enabled
+                worldAVBD = new RapierWorld(0.0, -9.81, 0.0, true);
+                log('Created Rapier world with AVBD solver', 'success');
+                log(`AVBD Solver backend: ${worldAVBD.get_solver_backend()}`, 'info');
+                
+                // Create world with default Impulse solver
+                worldImpulse = new RapierWorld(0.0, -9.81, 0.0, false);
+                log('Created Rapier world with Impulse solver', 'success');
+                log(`Impulse Solver backend: ${worldImpulse.get_solver_backend()}`, 'info');
+                
+                setStatus('✅ Ready! Both solvers initialized', 'success');
+                
+                // Enable buttons
+                document.getElementById('runTest').disabled = false;
+                document.getElementById('stepOnce').disabled = false;
+                document.getElementById('runBenchmark').disabled = false;
+                document.getElementById('metrics').style.display = 'block';
+                document.getElementById('impulse-metrics').style.display = 'block';
+                
+                updateMetrics();
+                
+            } catch (error) {
+                log(`Failed to initialize: ${error.message}`, 'error');
+                setStatus(`❌ Failed to load: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        }
+
+        document.getElementById('runBenchmark').addEventListener('click', () => {
+            if (!worldAVBD || !worldImpulse) return;
+            
+            log('🏁 Starting benchmark with 100 bodies and 100 colliders...', 'info');
+            log('═'.repeat(60), 'info');
+            
+            try {
+                // Helper function to create a test scene
+                function createTestScene(world, worldName) {
+                    // Create ground
+                    const groundHandle = world.create_fixed_body(0.0, -5.0, 0.0);
+                    world.create_cuboid_collider(groundHandle, 50.0, 0.5, 50.0);
+                    
+                    // Create 100 dynamic bodies with colliders
+                    const handles = [];
+                    for (let i = 0; i < 100; i++) {
+                        const x = (Math.random() - 0.5) * 20.0;
+                        const y = 5.0 + (i % 10) * 3.0;
+                        const z = (Math.random() - 0.5) * 20.0;
+                        
+                        const bodyHandle = world.create_dynamic_body(x, y, z);
+                        
+                        // Alternate between balls and boxes
+                        if (i % 2 === 0) {
+                            world.create_ball_collider(bodyHandle, 0.5);
+                        } else {
+                            world.create_cuboid_collider(bodyHandle, 0.5, 0.5, 0.5);
+                        }
+                        handles.push(bodyHandle);
+                    }
+                    
+                    log(`${worldName}: Created ${world.num_bodies()} bodies, ${world.num_colliders()} colliders`, 'success');
+                    return handles;
+                }
+                
+                // Create scenes for both worlds
+                log('Setting up AVBD world...', 'info');
+                const avbdHandles = createTestScene(worldAVBD, 'AVBD');
+                
+                log('Setting up Impulse world...', 'info');
+                const impulseHandles = createTestScene(worldImpulse, 'Impulse');
+                
+                updateMetrics();
+                
+                log('═'.repeat(60), 'info');
+                log('Running 100 simulation steps...', 'info');
+                
+                // Benchmark AVBD solver
+                const avbdStartTime = performance.now();
+                for (let i = 0; i < 100; i++) {
+                    worldAVBD.step();
+                    stepCountAVBD++;
+                }
+                const avbdEndTime = performance.now();
+                const avbdTime = avbdEndTime - avbdStartTime;
+                const avbdAvgTime = avbdTime / 100;
+                
+                // Benchmark Impulse solver
+                const impulseStartTime = performance.now();
+                for (let i = 0; i < 100; i++) {
+                    worldImpulse.step();
+                    stepCountImpulse++;
+                }
+                const impulseEndTime = performance.now();
+                const impulseTime = impulseEndTime - impulseStartTime;
+                const impulseAvgTime = impulseTime / 100;
+                
+                log('═'.repeat(60), 'info');
+                log('📊 BENCHMARK RESULTS:', 'success');
+                log('═'.repeat(60), 'info');
+                
+                log(`🔷 AVBD Solver:`, 'info');
+                log(`   Total time: ${avbdTime.toFixed(2)}ms`, 'info');
+                log(`   Average per step: ${avbdAvgTime.toFixed(3)}ms`, 'info');
+                log(`   Steps per second: ${(1000 / avbdAvgTime).toFixed(0)} Hz`, 'info');
+                
+                log(`🔶 Impulse Solver:`, 'info');
+                log(`   Total time: ${impulseTime.toFixed(2)}ms`, 'info');
+                log(`   Average per step: ${impulseAvgTime.toFixed(3)}ms`, 'info');
+                log(`   Steps per second: ${(1000 / impulseAvgTime).toFixed(0)} Hz`, 'info');
+                
+                log('═'.repeat(60), 'info');
+                
+                // Calculate speedup/slowdown
+                const ratio = impulseTime / avbdTime;
+                if (ratio > 1.0) {
+                    const speedup = ((ratio - 1) * 100).toFixed(1);
+                    log(`✨ AVBD is ${speedup}% FASTER than Impulse`, 'success');
+                } else if (ratio < 1.0) {
+                    const slowdown = ((1 / ratio - 1) * 100).toFixed(1);
+                    log(`⚠️ AVBD is ${slowdown}% slower than Impulse`, 'info');
+                } else {
+                    log('⚖️ Both solvers performed equally', 'info');
+                }
+                
+                log('═'.repeat(60), 'info');
+                
+                // Check final positions
+                const avbdPos = worldAVBD.get_body_translation(avbdHandles[0]);
+                const impulsePos = worldImpulse.get_body_translation(impulseHandles[0]);
+                log(`First body final positions:`, 'info');
+                log(`  AVBD:    [${avbdPos[0].toFixed(2)}, ${avbdPos[1].toFixed(2)}, ${avbdPos[2].toFixed(2)}]`, 'info');
+                log(`  Impulse: [${impulsePos[0].toFixed(2)}, ${impulsePos[1].toFixed(2)}, ${impulsePos[2].toFixed(2)}]`, 'info');
+                
+                updateMetrics();
+                
+            } catch (error) {
+                log(`Benchmark failed: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        });
+
+        document.getElementById('runTest').addEventListener('click', () => {
+            if (!worldAVBD) return;
+            
+            log('Running simulation test...', 'info');
+            
+            try {
+                // Create a ground plane (fixed body with a cuboid collider)
+                log('Creating ground plane...', 'info');
+                const groundHandle = worldAVBD.create_fixed_body(0.0, -5.0, 0.0);
+                worldAVBD.create_cuboid_collider(groundHandle, 50.0, 0.5, 50.0);
+                log(`Created ground body (handle: ${groundHandle})`, 'success');
+                
+                // Create several falling spheres
+                log('Creating falling spheres...', 'info');
+                const ballHandles = [];
+                for (let i = 0; i < 5; i++) {
+                    const x = (Math.random() - 0.5) * 10.0;
+                    const y = 10.0 + i * 3.0;
+                    const z = (Math.random() - 0.5) * 10.0;
+                    
+                    const bodyHandle = worldAVBD.create_dynamic_body(x, y, z);
+                    worldAVBD.create_ball_collider(bodyHandle, 0.5);
+                    ballHandles.push(bodyHandle);
+                }
+                log(`Created ${ballHandles.length} dynamic spheres`, 'success');
+                
+                updateMetrics();
+                
+                // Run 100 simulation steps
+                log('Running 100 simulation steps...', 'info');
+                const startTime = performance.now();
+                for (let i = 0; i < 100; i++) {
+                    worldAVBD.step();
+                    stepCountAVBD++;
+                }
+                const endTime = performance.now();
+                
+                const avgTime = (endTime - startTime) / 100;
+                log(`Completed 100 steps in ${(endTime - startTime).toFixed(2)}ms`, 'success');
+                log(`Average: ${avgTime.toFixed(3)}ms per step`, 'info');
+                
+                // Show position of first ball after simulation
+                const pos = worldAVBD.get_body_translation(ballHandles[0]);
+                log(`First ball final position: [${pos[0].toFixed(2)}, ${pos[1].toFixed(2)}, ${pos[2].toFixed(2)}]`, 'info');
+                
+                updateMetrics();
+            } catch (error) {
+                log(`Test failed: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        });
+
+        document.getElementById('stepOnce').addEventListener('click', () => {
+            if (!worldAVBD) return;
+            
+            try {
+                worldAVBD.step();
+                stepCountAVBD++;
+                if (worldImpulse) {
+                    worldImpulse.step();
+                    stepCountImpulse++;
+                }
+                log(`Step completed (AVBD: ${stepCountAVBD}, Impulse: ${stepCountImpulse})`, 'success');
+                updateMetrics();
+            } catch (error) {
+                log(`Step failed: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
+        });
+
+        document.getElementById('clearOutput').addEventListener('click', () => {
+            document.getElementById('output').textContent = '';
+            log('Output cleared', 'info');
+        });
+
+        // Initialize on page load
+        initWasm();
+    </script>
+</body>
+</html>

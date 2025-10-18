@@ -16,6 +16,9 @@ members = [
     "crates/rapier3d-urdf",
     "crates/rapier3d-meshloader",
 ]
+exclude = [
+    "rapier-wasm-avbd",
+]
 resolver = "2"
 
 [workspace.lints.clippy]

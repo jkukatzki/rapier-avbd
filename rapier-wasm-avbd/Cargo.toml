@@ -1,0 +1,25 @@
+[package]
+name = "rapier-wasm-avbd"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+
+[dependencies.rapier3d]
+path = "../crates/rapier3d"
+features = ["solver_avbd"]
+
+[features]
+default = []
+dim3 = []
+
+[profile.release]
+opt-level = 3
+lto = true

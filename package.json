@@ -1,0 +1,15 @@
+{
+  "name": "rapier-avbd-test",
+  "version": "0.1.0",
+  "description": "Test environment for Rapier AVBD WASM build",
+  "scripts": {
+    "build": "./build_wasm_quick.sh 3",
+    "build:2d": "./build_wasm_quick.sh 2",
+    "test": "python3 -m http.server 8000",
+    "test:node": "npx http-server -p 8000",
+    "clean": "rm -rf rapier-wasm-avbd/pkg rapier-wasm-avbd/target"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}
