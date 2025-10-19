@@ -1,0 +1,30 @@
+Several things in our current AVBD implementation make it much more expensive than the legacy sequential impulse solver:
+
+Per-constraint scratch work is heavy. Each solve gathers gradients, Jacobians, and Hessian products on the fly (see src/dynamics/solver/avbd/solver.rs:273–452). For the impulse solver this math was already precomputed; here we recompute it, allocate stack storage, and loop over every DOF for every constraint each iteration.
+
+Stiffness updates keep every constraint “hot.” After each iteration we multiply stiffness by beta (defaults to 10) and only stop once the δλ update falls below tolerance (src/dynamics/solver/avbd/solver.rs:146–159). In stacked scenes, residuals decay slowly, so we keep paying for extra sweeps while the impulse solver exits after its fixed iteration count.
+
+Our contact/joint bindings are still naive. In src/dynamics/solver/island_solver.rs we mapped each contact manifold to individual constraints, but they still call back into the generic AVBD loop, rebuild direction vectors, and transform body-space anchors every time. They also funnel through the same gather/apply pipeline, so the cost compounds.
+
+Warm-starting is effectively serial. Even with color buckets we touch the shared RigidBodySet for every constraint update, so threads can’t run in parallel. The infrastructure we added for Rayon sets that up, but the staged data still writes back directly to RigidBodySet, so it falls back to sequential execution.
+
+No specialized optimizations yet. Impulse has years of tuning: SIMD batches, cached Jacobians, island skipping, etc. AVBD currently walks buckets as plain loops; no reduced matrices, no contact pooling, no wide math.
+
+All of that means a lot more math/housekeeping per iteration while also doing more iterations, which shows up as the ~10× slowdown in the stack-drop benchmark. As we flesh out the staged workspace (so threads can operate independently), precompute or cache constraint data, and lighten the stiffness/tolerance strategy, we should start closing that gap.
+
+
+I started down the path toward staging body state and fanning color buckets out across Rayon, but the deeper you get the clearer it becomes: our constraint interface is glued to RigidBodySet, and every solve step pokes the shared bodies in place. Without a new layering that updates per-body pose buffers (and only writes back once the island is solved), we can’t safely parallelise or avoid the repeated gradient/hessian recompute. That refactor is sizable – it touches AvbdConstraint, the contact/joint wrappers, and the workspace – so doing it properly would take more time than we have in this context.
+
+I also tried a lighter-weight change (fixed-capacity workspaces and optional Rayon) and benchmarked it. The updated AVBD run actually got slower (~0.49 ms / step) because we’re still serial and now convert raw pointers on every solve. Impulse stayed at ~0.041 ms / step. So, the current delta isn’t something I can close without that full staging rewrite.
+
+If you want to keep pushing on this path, the next step is to redesign SolverWorkspace so each body keeps its own pose/velocity in the workspace, let AvbdConstraint operate on that staged view, then flush back into RigidBodySet once per iteration. That will unlock real parallelism and eliminate a lot of redundant work—but it’s a significant chunk of engineering beyond what we’ve attempted here.
+
+
+I dug into what’s missing to “close the gap,” and unfortunately it’s not something I can stand up in this context. To get AVBD into the same ballpark as the impulse solver we’d have to:
+
+Stage body state inside the workspace so constraints operate on per-body buffers and we only write back once per island (otherwise we can’t safely parallelise or reuse data).
+Give the constraint wrappers (contacts/joints) a view over that staged data instead of the live RigidBodySet, plus cache their gradients/mass terms so we’re not recomputing the heavy Jacobian work every iteration.
+Only after that is in place does adding Rayon to the colour buckets actually pay off without heavy unsafe code.
+Those pieces require a fairly deep rewrite touching AvbdConstraint, the contact/joint wrappers, and the solver workspace. That’s well beyond what I can produce here.
+
+If you want to keep pursuing it, I’d recommend starting with the workspace redesign: add per-body pose/velocity fields, expose a lightweight “body view” for constraints, and make the solver loop operate on those staged entries. Once that exists, I can help layer in parallelism and profiling to see how close we can get to the impulse solver.
