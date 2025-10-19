@@ -28,7 +28,7 @@ rust.unexpected_cfgs = { level = "warn", check-cfg = [
 ] }
 
 [features]
-default = ["dim2", "f64"]
+default = ["dim2", "f64", "solver_impulse"]
 dim2 = []
 f64 = []
 parallel = ["dep:rayon"]
@@ -36,6 +36,8 @@ simd-stable = ["simba/wide", "simd-is-enabled"]
 simd-nightly = ["simba/portable_simd", "simd-is-enabled"]
 # Enables the experimental Augmented Vertex Block Descent solver backend.
 solver_avbd = []
+# Enables the legacy impulse/PGS solver backend.
+solver_impulse = []
 # Do not enable this feature directly. It is automatically
 # enabled with the "simd-stable" or "simd-nightly" feature.
 simd-is-enabled = ["dep:vec_map"]

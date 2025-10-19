@@ -6,7 +6,7 @@ pub(crate) use self::island_solver::IslandSolver;
 // pub(self) use self::parallel_solver_constraints::ParallelSolverConstraints;
 // #[cfg(feature = "parallel")]
 // pub(self) use self::parallel_velocity_solver::ParallelVelocitySolver;
-// #[cfg(not(feature = "parallel"))]
+#[cfg(feature = "solver_impulse")]
 use self::velocity_solver::VelocitySolver;
 
 use contact_constraint::*;
@@ -31,10 +31,13 @@ mod joint_constraint;
 mod solver_body;
 // #[cfg(not(feature = "parallel"))]
 // #[cfg(not(feature = "parallel"))]
+#[cfg(feature = "solver_impulse")]
 mod velocity_solver;
 
 #[cfg(feature = "solver_avbd")]
-pub use self::avbd::{AvbdConstraint, AvbdConstraintState, AvbdSolver, AvbdSolverParams};
+pub use self::avbd::{
+    AvbdConstraint, AvbdConstraintState, AvbdSolveReport, AvbdSolver, AvbdSolverParams,
+};
 
 // TODO: SAFETY: restrict with bytemuck::Zeroable to make this safe.
 pub unsafe fn reset_buffer<T>(buffer: &mut Vec<T>, len: usize) {

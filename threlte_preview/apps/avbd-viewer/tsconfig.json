@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "$lib/*": ["src/lib/*"],
+      "@rapier-avbd/viewer-shared": ["../../packages/viewer-shared/src/index.ts"],
+      "@rapier-avbd/viewer-shared/*": ["../../packages/viewer-shared/src/*"]
+    }
+  },
+  "include": ["src/**/*", "svelte.config.js"],
+  "exclude": ["node_modules", "dist"]
+}

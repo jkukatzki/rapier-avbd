@@ -1,38 +1,20 @@
-# sv
+# Threlte Viewer Workspace
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+This workspace hosts two dedicated SvelteKit/Threlte applications used to visualise
+Rapier physics builds and exercise interactive benchmarks:
 
-## Creating a project
+- `apps/impulse-viewer` renders the upstream Rapier solver using the published
+  `@dimforge/rapier3d-compat` package.
+- `apps/avbd-viewer` renders the AVBD solver build by overriding the Rapier
+  dependency with the locally compiled `rapier-wasm-avbd` package.
 
-If you're seeing this, you've probably already done this step. Congrats!
+Use `pnpm dev:impulse` or `pnpm dev:avbd` from this directory to launch either
+viewer. Each viewer exposes identical controls so results can be compared side by
+side while retaining fully isolated dependency graphs.
 
-```sh
-# create a new project in the current directory
-npx sv create
+Run `pnpm test` to execute shared workspace smoke tests that guard the
+simulation-state stores powering both viewers.
 
-# create a new project in my-app
-npx sv create my-app
-```
-
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+> **Note:** The AVBD viewer expects `rapier-wasm-avbd/pkg` to be generated via the
+> root `build_wasm_quick.sh` workflow. Run `pnpm install` inside this workspace
+> after building the WASM package to wire the local link dependency.

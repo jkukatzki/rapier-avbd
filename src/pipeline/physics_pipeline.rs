@@ -5,6 +5,8 @@ use crate::counters::Counters;
 use crate::dynamics::IslandSolver;
 #[cfg(feature = "parallel")]
 use crate::dynamics::JointGraphEdge;
+#[cfg(feature = "solver_avbd")]
+use crate::dynamics::AvbdSolveReport;
 use crate::dynamics::{
     CCDSolver, ImpulseJointSet, IntegrationParameters, IslandManager, MultibodyJointSet,
     RigidBodyChanges, RigidBodyType,
@@ -46,6 +48,8 @@ pub struct PhysicsPipeline {
     broadphase_collider_pairs: Vec<ColliderPair>,
     broad_phase_events: Vec<BroadPhasePairEvent>,
     solvers: Vec<IslandSolver>,
+    #[cfg(feature = "solver_avbd")]
+    avbd_reports: Vec<AvbdSolveReport>,
 }
 
 impl Default for PhysicsPipeline {
@@ -74,6 +78,8 @@ impl PhysicsPipeline {
             joint_constraint_indices: vec![],
             broadphase_collider_pairs: vec![],
             broad_phase_events: vec![],
+            #[cfg(feature = "solver_avbd")]
+            avbd_reports: Vec::new(),
         }
     }
 
@@ -316,6 +322,16 @@ impl PhysicsPipeline {
                     });
             });
             self.counters.solver.velocity_resolution_time.pause();
+        }
+
+        #[cfg(feature = "solver_avbd")]
+        {
+            self.avbd_reports.clear();
+            for solver in &mut self.solvers[..islands.num_islands()] {
+                if let Some(report) = solver.take_avbd_report() {
+                    self.avbd_reports.push(report);
+                }
+            }
         }
 
         // Generate contact force events if needed.
@@ -727,6 +743,14 @@ impl PhysicsPipeline {
         colliders.set_modified(modified_colliders);
 
         self.counters.step_completed();
+    }
+}
+
+#[cfg(feature = "solver_avbd")]
+impl PhysicsPipeline {
+    /// Returns the AVBD solve reports collected during the most recent step.
+    pub fn take_avbd_reports(&mut self) -> Vec<AvbdSolveReport> {
+        std::mem::take(&mut self.avbd_reports)
     }
 }
 

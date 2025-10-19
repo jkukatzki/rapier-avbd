@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@rapier-avbd/viewer-shared": ["./src/index.ts"],
+      "@rapier-avbd/viewer-shared/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*"]
+}

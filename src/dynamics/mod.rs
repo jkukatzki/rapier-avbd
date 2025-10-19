@@ -18,7 +18,9 @@ pub(crate) use self::solver::IslandSolver;
 // #[cfg(feature = "parallel")]
 // pub(crate) use self::solver::ParallelIslandSolver;
 #[cfg(feature = "solver_avbd")]
-pub use self::solver::{AvbdConstraint, AvbdConstraintState, AvbdSolver, AvbdSolverParams};
+pub use self::solver::{
+    AvbdConstraint, AvbdConstraintState, AvbdSolveReport, AvbdSolver, AvbdSolverParams,
+};
 pub use parry::mass_properties::MassProperties;
 
 pub use self::rigid_body::{RigidBody, RigidBodyBuilder};

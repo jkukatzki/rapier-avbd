@@ -1,5 +1,6 @@
 use wasm_bindgen::prelude::*;
 use rapier3d::prelude::*;
+use std::time::Instant;
 
 #[wasm_bindgen]
 pub fn init_panic_hook() {
@@ -17,6 +18,28 @@ pub fn is_avbd_available() -> bool {
 }
 
 #[wasm_bindgen]
+pub struct StepMetrics {
+    solver_ms: f32,
+    total_ms: f32,
+    iterations: u32,
+}
+
+#[wasm_bindgen]
+impl StepMetrics {
+    pub fn solver_ms(&self) -> f32 {
+        self.solver_ms
+    }
+
+    pub fn total_ms(&self) -> f32 {
+        self.total_ms
+    }
+
+    pub fn iterations(&self) -> u32 {
+        self.iterations
+    }
+}
+
+#[wasm_bindgen]
 pub struct RapierWorld {
     physics_pipeline: PhysicsPipeline,
     integration_parameters: IntegrationParameters,
@@ -29,6 +52,8 @@ pub struct RapierWorld {
     rigid_body_set: RigidBodySet,
     collider_set: ColliderSet,
     gravity: Vector<Real>,
+    base_gravity: Vector<Real>,
+    gravity_scale: f32,
 }
 
 #[wasm_bindgen]
@@ -41,6 +66,7 @@ impl RapierWorld {
             integration_parameters.solver_backend = SolverBackend::Avbd;
         }
         
+        let base_gravity = Vector::new(gravity_x, gravity_y, gravity_z);
         RapierWorld {
             physics_pipeline: PhysicsPipeline::new(),
             integration_parameters,
@@ -52,10 +78,12 @@ impl RapierWorld {
             ccd_solver: CCDSolver::new(),
             rigid_body_set: RigidBodySet::new(),
             collider_set: ColliderSet::new(),
-            gravity: Vector::new(gravity_x, gravity_y, gravity_z),
+            gravity: base_gravity,
+            base_gravity,
+            gravity_scale: 1.0,
         }
     }
-    
+
     pub fn step(&mut self) {
         self.physics_pipeline.step(
             &self.gravity,
@@ -72,6 +100,28 @@ impl RapierWorld {
             &(),
         );
     }
+
+    pub fn step_with_metrics(&mut self) -> StepMetrics {
+        let start = Instant::now();
+        self.step();
+        let total_elapsed = start.elapsed().as_secs_f64() * 1_000.0;
+
+        let mut solver_ms = 0.0f64;
+        let mut iterations = 0u32;
+
+        if self.integration_parameters.solver_backend == SolverBackend::Avbd {
+            for report in self.physics_pipeline.take_avbd_reports() {
+                solver_ms += report.solve_time.as_secs_f64() * 1_000.0;
+                iterations = iterations.max(report.iteration_count as u32);
+            }
+        }
+
+        StepMetrics {
+            solver_ms: solver_ms as f32,
+            total_ms: total_elapsed as f32,
+            iterations,
+        }
+    }
     
     pub fn num_bodies(&self) -> usize {
         self.rigid_body_set.len()
@@ -83,6 +133,66 @@ impl RapierWorld {
     
     pub fn get_solver_backend(&self) -> String {
         format!("{:?}", self.integration_parameters.solver_backend)
+    }
+
+    pub fn set_gravity_scale(&mut self, scale: f32) {
+        self.gravity_scale = scale;
+        let scaled = self.base_gravity * (scale as Real);
+        self.gravity = scaled;
+    }
+
+    pub fn set_avbd_params(
+        &mut self,
+        iterations: u32,
+        alpha: f32,
+        beta: f32,
+        gamma: f32,
+        stiffness_min: f32,
+        stiffness_max: f32,
+        regularization: f32,
+    ) {
+        #[cfg(feature = "solver_avbd")]
+        {
+            self.integration_parameters.avbd_params = AvbdSolverParams {
+                iterations: iterations as usize,
+                alpha: alpha as Real,
+                beta: beta as Real,
+                gamma: gamma as Real,
+                warmstart: true,
+                allow_parallelism: false,
+                stiffness_min: stiffness_min as Real,
+                stiffness_max: stiffness_max as Real,
+            };
+            // Regularization maps to warmstart coefficient for now by clamping the stiffness range.
+            let regularized = regularization.max(0.0) as Real;
+            self.integration_parameters.avbd_params.stiffness_min =
+                self.integration_parameters.avbd_params.stiffness_min.max(regularized);
+        }
+    }
+
+    pub fn clear_dynamic_bodies(&mut self) {
+        let handles: Vec<_> = self
+            .rigid_body_set
+            .iter()
+            .filter_map(|(handle, body)| {
+                if body.body_type() == RigidBodyType::Dynamic {
+                    Some(handle)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for handle in handles {
+            self.rigid_body_set.remove(
+                handle,
+                &mut self.islands,
+                &mut self.collider_set,
+                &mut self.impulse_joint_set,
+                &mut self.multibody_joint_set,
+                true,
+            );
+        }
     }
     
     /// Create a dynamic rigid body and return its handle
@@ -135,6 +245,20 @@ impl RapierWorld {
             vec![translation.x, translation.y, translation.z]
         } else {
             vec![0.0, 0.0, 0.0]
+        }
+    }
+
+    pub fn remove_body(&mut self, body_handle: u32) {
+        let handle = RigidBodyHandle::from_raw_parts(body_handle, 0);
+        if self.rigid_body_set.contains(handle) {
+            self.rigid_body_set.remove(
+                handle,
+                &mut self.islands,
+                &mut self.collider_set,
+                &mut self.impulse_joint_set,
+                &mut self.multibody_joint_set,
+                true,
+            );
         }
     }
 }

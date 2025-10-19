@@ -12,4 +12,4 @@ mod solver;
 
 pub use constraint::{AVBD_DOF, AvbdConstraint, AvbdConstraintState};
 pub use params::AvbdSolverParams;
-pub use solver::AvbdSolver;
+pub use solver::{AvbdSolveReport, AvbdSolver};

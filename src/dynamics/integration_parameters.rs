@@ -1,3 +1,5 @@
+#[cfg(feature = "solver_avbd")]
+use crate::dynamics::solver::AvbdSolverParams;
 use crate::math::Real;
 use na::RealField;
 
@@ -34,6 +36,12 @@ pub enum FrictionModel {
 }
 
 /// Solver backend selection.
+#[cfg(all(not(feature = "solver_impulse"), not(feature = "solver_avbd")))]
+compile_error!(
+    "At least one solver backend feature (`solver_impulse` or `solver_avbd`) must be enabled."
+);
+
+/// Available constraint solver backends used during physics integration.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 pub enum SolverBackend {
@@ -46,6 +54,17 @@ pub enum SolverBackend {
 
 impl Default for SolverBackend {
     fn default() -> Self {
+        #[cfg(feature = "solver_impulse")]
+        {
+            return Self::Impulse;
+        }
+
+        #[cfg(all(not(feature = "solver_impulse"), feature = "solver_avbd"))]
+        {
+            return Self::Avbd;
+        }
+
+        #[allow(unreachable_code)]
         Self::Impulse
     }
 }
@@ -184,6 +203,9 @@ pub struct IntegrationParameters {
     /// The type of friction constraints used in the simulation.
     #[cfg(feature = "dim3")]
     pub friction_model: FrictionModel,
+    /// Parameters forwarded to the AVBD solver when that backend is active.
+    #[cfg(feature = "solver_avbd")]
+    pub avbd_params: AvbdSolverParams,
 }
 
 impl IntegrationParameters {
@@ -370,6 +392,8 @@ impl Default for IntegrationParameters {
             length_unit: 1.0,
             #[cfg(feature = "dim3")]
             friction_model: FrictionModel::default(),
+            #[cfg(feature = "solver_avbd")]
+            avbd_params: AvbdSolverParams::default(),
         }
     }
 }
