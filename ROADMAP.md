@@ -29,10 +29,14 @@
   - Added coverage for the AVBD dispatcher and solver interface with bespoke tests exercising the new placeholder path.【F:src/dynamics/solver/island_solver.rs†L192-L222】【F:src/dynamics/solver/avbd/solver.rs†L300-L417】
 
 ## Phase 3: Algorithm Implementation
-- [ ] Implement primal AVBD iteration (vertex block updates, constraint projection) using nalgebra structures.
-- [ ] Add augmented Lagrangian dual updates and stiffness escalation controls.
-- [ ] Introduce color bucket partitioning and parallel execution scaffolding (Rayon/parallel iterators or existing Rapier threadpool hooks).
-- [ ] Validate solver stability against baseline scenarios with integration tests.
+- [x] Implement primal AVBD iteration (vertex block updates, constraint projection) using nalgebra structures.
+  - Constraint processing now reuses solver workspace buffers to evaluate gradients, Hessians, and block mass inverses per body, applying projection updates per iteration.【F:src/dynamics/solver/avbd/solver.rs†L70-L196】
+- [x] Add augmented Lagrangian dual updates and stiffness escalation controls.
+  - Lambda relaxation, stiffness decay/warm-start, and per-iteration growth follow the AVBD parameterization with configurable clamps.【F:src/dynamics/solver/avbd/solver.rs†L98-L164】【F:src/dynamics/solver/avbd/solver.rs†L206-L230】
+- [x] Introduce color bucket partitioning and parallel execution scaffolding (Rayon/parallel iterators or existing Rapier threadpool hooks).
+  - Solver workspace builds conflict-free constraint buckets and retains per-body color usage so future parallel passes can dispatch buckets safely.【F:src/dynamics/solver/avbd/solver.rs†L232-L318】
+- [x] Validate solver stability against baseline scenarios with integration tests.
+  - Added regression tests covering convergence, coloring, and augmented stiffness growth to guard the implementation trajectory.【F:src/dynamics/solver/avbd/solver.rs†L420-L496】
 
 ## Phase 4: Performance & Memory Strategy
 - [ ] Profile memory usage patterns and implement pooled buffers / arena allocators optimized for AVBD iterations.
