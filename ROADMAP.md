@@ -49,9 +49,9 @@
   - Added `AvbdSolveReport` and `AvbdSolver::take_report` to expose iteration counts, warm-start usage, and wall-clock timings for downstream benchmarking surfaces.【F:src/dynamics/solver/avbd/solver.rs†L20-L116】
 
 ## Phase 5: Tooling, Build, and MCP Integration
-- [ ] Update build scripts to include AVBD feature flag handling for Cargo, wasm-bindgen, and pnpm workflows (separate packages for baseline vs AVBD builds).
-- [ ] Create Node.js benchmarking CLI with MCP interface enabling remote invocation of builds/tests and capturing performance metrics.
-- [ ] Maintain scoreboard persistence (e.g., JSON history) and copy of benchmarked binaries/source snapshots per iteration.
+- [x] Update build scripts to include AVBD feature flag handling for Cargo, wasm-bindgen, and pnpm workflows (separate packages for baseline vs AVBD builds).【F:build_wasm_quick.sh†L1-L210】【F:package.json†L1-L21】
+- [x] Create Node.js benchmarking CLI with MCP interface enabling remote invocation of builds/tests and capturing performance metrics.【F:tools/mcp/server.js†L1-L214】【F:package.json†L12-L21】
+- [x] Maintain scoreboard persistence (e.g., JSON history) and copy of benchmarked binaries/source snapshots per iteration.【F:benchmarks3d/scoreboard.json†L1-L1】【F:tools/mcp/server.js†L59-L119】
 
 ## Phase 6: Web Frontend & Visualization
 - [ ] Produce two Threlte frontends: one loading stock Rapier WASM, one loading AVBD WASM via pnpm local replacement.

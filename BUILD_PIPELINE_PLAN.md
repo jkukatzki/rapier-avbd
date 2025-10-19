@@ -10,14 +10,14 @@ This plan captures the staged build and packaging flow for the AVBD solver work 
 
 ## 2. WASM packaging
 
-1. **Build scripts** – Extend `build_wasm_quick.sh` so it accepts a `--backend avbd|impulse` flag that forwards the right feature set to `cargo build -p rapier3d` and toggles the wasm-bindgen output folder (e.g., `rapier-wasm-avbd` vs `rapier-wasm`).【F:build_wasm_quick.sh†L1-L120】
+1. **Build scripts** – Extend `build_wasm_quick.sh` so it accepts a `--solver avbd|impulse` flag that forwards the right feature set to Cargo and generates discrete wasm-bindgen packages (`rapier-wasm-avbd` vs. `rapier-wasm-impulse`).【F:build_wasm_quick.sh†L1-L210】
 2. **Dual packages** – Maintain two pnpm workspaces: the upstream Rapier JS bundle and an AVBD override built via local file replacement (mirroring the guidance already captured in `build_js_with_avbd.md`). Each workspace uses the same API surface so the Threlte demos can swap packages without code changes.【F:build_js_with_avbd.md†L1-L130】【F:threlte_preview/package.json†L1-L32】
 3. **Digest alignment** – Pull configuration hints from the Houdini/OpenCL digest when tuning memory layouts before exporting to WASM to avoid regressing GPU friendliness later in the roadmap.【F:llm_digests/avbd_houdini_impl_git_repo_digest.txt†L1-L180】
 
 ## 3. Benchmark & MCP automation
 
-1. **Node CLI** – Add a `benchmarks/cli` package that shells out to `cargo run --example` scenes, capturing timing and solver reports via `AvbdSolveReport`. Persist results to the planned scoreboard JSON for historical comparison.【F:ROADMAP.md†L73-L112】【F:src/dynamics/solver/avbd/solver.rs†L20-L197】
-2. **MCP bridge** – Wire the CLI into the requested MCP endpoint so remote triggers can build AVBD, run deterministic smoke tests, and fetch the scoreboard. Use pnpm scripts and `package.json` hooks to register the MCP commands.【F:package.json†L1-L38】
+1. **Node CLI** – Ship a reusable harness (`tools/mcp/server.js`) that shells out to the dedicated `solver-bench` crate, captures timing data, and keeps the scoreboard JSON in sync for historical comparison.【F:tools/mcp/server.js†L1-L214】【F:tools/solver-bench/src/main.rs†L1-L213】
+2. **MCP bridge** – Expose the CLI through MCP commands (`build-wasm`, `run-bench`, `get-scoreboard`) and surface pnpm shortcuts so remote triggers can drive builds and benchmarking runs from a single entrypoint.【F:tools/mcp/server.js†L134-L210】【F:package.json†L12-L21】
 3. **Result parity** – Gate any Rayon-based execution path behind the benchmark harness once determinism parity assertions pass; the harness should fail fast if AVBD diverges from the impulse baseline beyond an epsilon threshold, leveraging the new result-matching tests as fixtures.【F:src/dynamics/solver/avbd/solver.rs†L577-L702】
 
 ## 4. Reporting & documentation

@@ -15,6 +15,7 @@ members = [
     "benchmarks3d",
     "crates/rapier3d-urdf",
     "crates/rapier3d-meshloader",
+    "tools/solver-bench",
 ]
 exclude = [
     "rapier-wasm-avbd",
