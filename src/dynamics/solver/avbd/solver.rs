@@ -44,15 +44,21 @@ impl AvbdSolver {
     }
 
     /// Executes an AVBD solve pass for the supplied rigid bodies and constraints.
-    pub fn solve<C>(&mut self, bodies: &mut RigidBodySet, constraints: &mut [C], dt: Real)
-    where
+    pub fn solve<C>(
+        &mut self,
+        bodies: &mut RigidBodySet,
+        island_bodies: &[RigidBodyHandle],
+        constraints: &mut [C],
+        dt: Real,
+    ) where
         C: AvbdConstraint,
     {
-        if constraints.is_empty() || bodies.len() == 0 || dt <= 0.0 {
+        if island_bodies.is_empty() || bodies.len() == 0 || dt <= 0.0 {
             return;
         }
 
-        self.workspace.initialize(bodies, constraints, dt);
+        self.workspace
+            .initialize(bodies, island_bodies, constraints, dt);
         let warm_lambda = self.params.alpha * self.params.gamma;
         let stiffness_decay = self.params.gamma;
 
@@ -163,49 +169,62 @@ struct SolverWorkspace {
 }
 
 impl SolverWorkspace {
-    fn initialize<C>(&mut self, bodies: &mut RigidBodySet, constraints: &[C], dt: Real)
-    where
+    fn initialize<C>(
+        &mut self,
+        bodies: &mut RigidBodySet,
+        island_bodies: &[RigidBodyHandle],
+        constraints: &[C],
+        dt: Real,
+    ) where
         C: AvbdConstraint,
     {
         self.body_map.clear();
         self.bodies.clear();
 
+        for handle in island_bodies {
+            self.ensure_body_entry(*handle, bodies, dt);
+        }
+
         for constraint in constraints {
             for handle in constraint.bodies() {
-                if self.body_map.contains_key(handle) {
-                    continue;
-                }
-
-                let is_dynamic = bodies
-                    .get(*handle)
-                    .map(|rb| rb.body_type == RigidBodyType::Dynamic && rb.is_enabled())
-                    .unwrap_or(false);
-
-                if !is_dynamic {
-                    continue;
-                }
-
-                let rb = bodies.index_mut_internal(*handle);
-                let initial_pose = rb.pos.position;
-                let predicted_pose = rb
-                    .pos
-                    .integrate_forces_and_velocities(dt, &rb.forces, &rb.vels, &rb.mprops);
-
-                rb.pos.position = predicted_pose;
-                rb.pos.next_position = predicted_pose;
-
-                let entry = BodyEntry {
-                    handle: *handle,
-                    inv_mass: rb.mprops.effective_inv_mass,
-                    inv_inertia: rb.mprops.effective_world_inv_inertia,
-                    initial_pose,
-                };
-
-                let index = self.bodies.len();
-                self.body_map.insert(*handle, index);
-                self.bodies.push(entry);
+                self.ensure_body_entry(*handle, bodies, dt);
             }
         }
+    }
+
+    fn ensure_body_entry(&mut self, handle: RigidBodyHandle, bodies: &mut RigidBodySet, dt: Real) {
+        if self.body_map.contains_key(&handle) {
+            return;
+        }
+
+        let is_dynamic = bodies
+            .get(handle)
+            .map(|rb| rb.body_type == RigidBodyType::Dynamic && rb.is_enabled())
+            .unwrap_or(false);
+
+        if !is_dynamic {
+            return;
+        }
+
+        let rb = bodies.index_mut_internal(handle);
+        let initial_pose = rb.pos.position;
+        let predicted_pose = rb
+            .pos
+            .integrate_forces_and_velocities(dt, &rb.forces, &rb.vels, &rb.mprops);
+
+        rb.pos.position = predicted_pose;
+        rb.pos.next_position = predicted_pose;
+
+        let entry = BodyEntry {
+            handle,
+            inv_mass: rb.mprops.effective_inv_mass,
+            inv_inertia: rb.mprops.effective_world_inv_inertia,
+            initial_pose,
+        };
+
+        let index = self.bodies.len();
+        self.body_map.insert(handle, index);
+        self.bodies.push(entry);
     }
 
     fn mass_inverse(&self, entry_index: usize, grad: &[Real; AVBD_DOF]) -> [Real; AVBD_DOF] {
@@ -418,7 +437,13 @@ mod tests {
             ..Default::default()
         });
 
-        solver.solve(&mut bodies, std::slice::from_mut(&mut constraint), 0.01);
+        let island_handles = vec![h1, h2];
+        solver.solve(
+            &mut bodies,
+            &island_handles,
+            std::slice::from_mut(&mut constraint),
+            0.01,
+        );
 
         let p1 = bodies[h1].pos.position.translation.vector.x;
         let p2 = bodies[h2].pos.position.translation.vector.x;

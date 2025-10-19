@@ -21,9 +21,12 @@
   - Documented Rust integration parameter hooks, WASM exports mirroring rapier.js, and Node/MCP entry points for feature toggling and benchmarks.【F:ARCHITECTURE.md†L35-L45】
 
 ## Phase 2: Core Solver Scaffolding
-- [ ] Implement Rust module scaffolding for AVBD solver with placeholder algorithms, integrating with existing step pipeline hooks.
-- [ ] Establish optional compilation path conditioned on the AVBD feature flag and ensure legacy solver is excluded in that configuration.
-- [ ] Write initial unit tests covering solver selection logic and compile-time feature enforcement.
+- [x] Implement Rust module scaffolding for AVBD solver with placeholder algorithms, integrating with existing step pipeline hooks.
+  - Added an `AvbdIslandSolver` shim that collects contact and joint handles into placeholder constraints and dispatches the solver during island processing.【F:src/dynamics/solver/island_solver.rs†L1-L222】
+- [x] Establish optional compilation path conditioned on the AVBD feature flag and ensure legacy solver is excluded in that configuration.
+  - Feature gating now removes the legacy velocity solver when `solver_impulse` is disabled and emits a compile-time error if no solver backend is selected.【F:src/dynamics/solver/mod.rs†L1-L36】【F:src/dynamics/integration_parameters.rs†L36-L71】
+- [x] Write initial unit tests covering solver selection logic and compile-time feature enforcement.
+  - Added coverage for the AVBD dispatcher and solver interface with bespoke tests exercising the new placeholder path.【F:src/dynamics/solver/island_solver.rs†L192-L222】【F:src/dynamics/solver/avbd/solver.rs†L300-L417】
 
 ## Phase 3: Algorithm Implementation
 - [ ] Implement primal AVBD iteration (vertex block updates, constraint projection) using nalgebra structures.

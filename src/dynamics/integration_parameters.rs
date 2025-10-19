@@ -34,6 +34,12 @@ pub enum FrictionModel {
 }
 
 /// Solver backend selection.
+#[cfg(all(not(feature = "solver_impulse"), not(feature = "solver_avbd")))]
+compile_error!(
+    "At least one solver backend feature (`solver_impulse` or `solver_avbd`) must be enabled."
+);
+
+/// Available constraint solver backends used during physics integration.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 pub enum SolverBackend {
@@ -46,6 +52,17 @@ pub enum SolverBackend {
 
 impl Default for SolverBackend {
     fn default() -> Self {
+        #[cfg(feature = "solver_impulse")]
+        {
+            return Self::Impulse;
+        }
+
+        #[cfg(all(not(feature = "solver_impulse"), feature = "solver_avbd"))]
+        {
+            return Self::Avbd;
+        }
+
+        #[allow(unreachable_code)]
         Self::Impulse
     }
 }
