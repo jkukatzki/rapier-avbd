@@ -14,7 +14,8 @@ console_error_panic_hook = "0.1"
 
 [dependencies.rapier3d]
 path = "../crates/rapier3d"
-features = ["solver_avbd"]
+default-features = false
+features = ["dim3", "f32", "solver_avbd", "profiler"]
 
 [features]
 default = []

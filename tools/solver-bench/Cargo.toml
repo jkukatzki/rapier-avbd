@@ -1,0 +1,23 @@
+[package]
+name = "solver-bench"
+version = "0.1.0"
+edition = "2024"
+authors = ["Rapier AVBD Team"]
+description = "Deterministic solver benchmark harness for Rapier"
+license = "Apache-2.0"
+
+[features]
+default = ["solver_impulse", "profiler"]
+solver_impulse = ["rapier3d/solver_impulse"]
+solver_avbd = ["rapier3d/solver_avbd"]
+profiler = ["rapier3d/profiler"]
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dependencies.rapier3d]
+path = "../../crates/rapier3d"
+default-features = false
+features = ["dim3", "f32"]

@@ -7,9 +7,18 @@
     "build:2d": "./build_wasm_quick.sh 2",
     "test": "python3 -m http.server 8000",
     "test:node": "npx http-server -p 8000",
-    "clean": "rm -rf rapier-wasm-avbd/pkg rapier-wasm-avbd/target"
+    "clean": "rm -rf rapier-wasm-avbd/pkg rapier-wasm-avbd/target rapier-wasm-impulse/pkg rapier-wasm-impulse/target",
+    "build:wasm:avbd": "./build_wasm_quick.sh 3 --solver avbd --release",
+    "build:wasm:impulse": "./build_wasm_quick.sh 3 --solver impulse --release",
+    "bench:avbd": "node tools/mcp/server.js bench --solver avbd",
+    "bench:impulse": "node tools/mcp/server.js bench --solver impulse",
+    "mcp:server": "node tools/mcp/server.js serve"
   },
   "devDependencies": {
     "http-server": "^14.1.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.1",
+    "zod": "^4.1.12"
   }
 }
