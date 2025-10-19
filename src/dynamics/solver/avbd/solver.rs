@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::dynamics::{RigidBodyHandle, RigidBodySet, RigidBodyType};
 use crate::math::{ANG_DIM, AngVector, AngularInertia, Isometry, Real, SPATIAL_DIM, Vector};
@@ -18,10 +19,50 @@ struct BodyEntry {
     initial_pose: Isometry<Real>,
 }
 
+/// Run-time metrics collected from the latest AVBD solve call.
+#[derive(Clone, Debug)]
+pub struct AvbdSolveReport {
+    /// Number of dynamic bodies touched by the solver.
+    pub body_count: usize,
+    /// Number of constraints processed during the solve.
+    pub constraint_count: usize,
+    /// Number of bucket colors generated for the island.
+    pub bucket_count: usize,
+    /// Number of outer iterations executed.
+    pub iteration_count: usize,
+    /// Whether a positional warm start was applied this step.
+    pub warmstart_applied: bool,
+    /// Scaling factor applied to cached duals during warm start.
+    pub warmstart_scale: Real,
+    /// Time spent inside the solve routine.
+    pub solve_time: Duration,
+    /// Indicates if the caller requested a parallel solve.
+    pub parallelism_requested: bool,
+    /// Whether the solver executed any parallel work.
+    pub parallelism_used: bool,
+}
+
+impl Default for AvbdSolveReport {
+    fn default() -> Self {
+        Self {
+            body_count: 0,
+            constraint_count: 0,
+            bucket_count: 0,
+            iteration_count: 0,
+            warmstart_applied: false,
+            warmstart_scale: 1.0,
+            solve_time: Duration::ZERO,
+            parallelism_requested: false,
+            parallelism_used: false,
+        }
+    }
+}
+
 /// Augmented Vertex Block Descent solver implementation.
 pub struct AvbdSolver {
     params: AvbdSolverParams,
     workspace: SolverWorkspace,
+    report: AvbdSolveReport,
 }
 
 impl AvbdSolver {
@@ -30,6 +71,7 @@ impl AvbdSolver {
         Self {
             params,
             workspace: SolverWorkspace::default(),
+            report: AvbdSolveReport::default(),
         }
     }
 
@@ -41,6 +83,17 @@ impl AvbdSolver {
     /// Returns a mutable reference to the current solver parameters.
     pub fn params_mut(&mut self) -> &mut AvbdSolverParams {
         &mut self.params
+    }
+
+    /// Returns metrics collected during the most recent solve call.
+    pub fn last_report(&self) -> &AvbdSolveReport {
+        &self.report
+    }
+
+    /// Returns the metrics collected during the most recent solve call,
+    /// resetting the stored report to its default state.
+    pub fn take_report(&mut self) -> AvbdSolveReport {
+        std::mem::take(&mut self.report)
     }
 
     /// Executes an AVBD solve pass for the supplied rigid bodies and constraints.
@@ -57,19 +110,28 @@ impl AvbdSolver {
             return;
         }
 
+        let solve_start = Instant::now();
         self.workspace
             .initialize(bodies, island_bodies, constraints, dt);
         let warm_lambda = self.params.gamma;
         let stiffness_decay = self.params.gamma;
+        let mut warmstart_candidate = false;
 
         for constraint in constraints.iter_mut() {
             let state = constraint.state_mut();
             state.lambda *= warm_lambda;
             state.stiffness = clamp_stiffness(state.stiffness * stiffness_decay, &self.params);
+            if self.params.warmstart && state.lambda.abs() > 0.0 {
+                warmstart_candidate = true;
+            }
+        }
+
+        let bucket_schedule = self.workspace.constraint_buckets.clone();
+        if self.params.warmstart && warmstart_candidate {
+            self.warm_start_constraints(bodies, constraints, &bucket_schedule);
         }
 
         let constraint_ptr = constraints.as_mut_ptr();
-        let bucket_schedule = self.workspace.constraint_buckets.clone();
 
         for _ in 0..self.params.iterations {
             for bucket in &bucket_schedule {
@@ -84,6 +146,18 @@ impl AvbdSolver {
         }
 
         self.workspace.writeback(bodies, dt);
+
+        self.report = AvbdSolveReport {
+            body_count: self.workspace.bodies.len(),
+            constraint_count: constraints.len(),
+            bucket_count: bucket_schedule.len(),
+            iteration_count: self.params.iterations,
+            warmstart_applied: self.params.warmstart && warmstart_candidate,
+            warmstart_scale: warm_lambda,
+            solve_time: solve_start.elapsed(),
+            parallelism_requested: self.params.allow_parallelism,
+            parallelism_used: false,
+        };
     }
 
     fn solve_constraint<C>(&mut self, bodies: &mut RigidBodySet, constraint: &mut C)
@@ -96,32 +170,14 @@ impl AvbdSolver {
         }
 
         let mut scratch = self.workspace.take_scratch();
-        scratch.ensure_capacity(handles.len());
-        scratch.indices.clear();
+        let active_len = self
+            .workspace
+            .gather_constraint(&*bodies, constraint, &mut scratch);
 
-        for handle in handles.iter().copied() {
-            if let Some(entry_index) = self.workspace.body_map.get(&handle).copied() {
-                let slot = scratch.indices.len();
-                let grad = &mut scratch.gradients[slot];
-                grad.fill(0.0);
-                constraint.gradient(bodies, handle, grad);
-
-                scratch.minv_gradients[slot] = self.workspace.mass_inverse(entry_index, grad);
-
-                let mut local_hessian = [[0.0; AVBD_DOF]; AVBD_DOF];
-                constraint.hessian(bodies, handle, &mut local_hessian);
-                scratch.hessian_products[slot] = apply_hessian(&local_hessian, grad);
-
-                scratch.indices.push(entry_index);
-            }
-        }
-
-        if scratch.indices.is_empty() {
+        if active_len == 0 {
             self.workspace.restore_scratch(scratch);
             return;
         }
-
-        let active_len = scratch.indices.len();
 
         let compliance = {
             let state = constraint.state();
@@ -180,6 +236,51 @@ impl AvbdSolver {
 
         self.workspace.restore_scratch(scratch);
     }
+
+    fn warm_start_constraints<C>(
+        &mut self,
+        bodies: &mut RigidBodySet,
+        constraints: &mut [C],
+        bucket_schedule: &[Vec<usize>],
+    ) where
+        C: AvbdConstraint,
+    {
+        let constraint_ptr = constraints.as_mut_ptr();
+        for bucket in bucket_schedule {
+            for &constraint_index in bucket {
+                // SAFETY: indices unique inside the bucket schedule.
+                let constraint = unsafe { &mut *constraint_ptr.add(constraint_index) };
+                let lambda = constraint.state().lambda;
+                if lambda == 0.0 {
+                    continue;
+                }
+
+                let mut scratch = self.workspace.take_scratch();
+                let active_len =
+                    self.workspace
+                        .gather_constraint(&*bodies, constraint, &mut scratch);
+                if active_len == 0 {
+                    self.workspace.restore_scratch(scratch);
+                    continue;
+                }
+
+                for (entry_index, minv_grad) in scratch
+                    .indices
+                    .iter()
+                    .zip(scratch.minv_gradients[..active_len].iter())
+                {
+                    let mut delta = [0.0; AVBD_DOF];
+                    for i in 0..AVBD_DOF {
+                        delta[i] = minv_grad[i] * lambda;
+                    }
+                    self.workspace
+                        .apply_body_delta(*entry_index, &delta, bodies);
+                }
+
+                self.workspace.restore_scratch(scratch);
+            }
+        }
+    }
 }
 
 fn clamp_stiffness(value: Real, params: &AvbdSolverParams) -> Real {
@@ -218,6 +319,24 @@ impl SolverWorkspace {
         self.constraint_buckets.clear();
         self.body_bucket_usage.clear();
 
+        let mut estimated_entries = island_bodies.len();
+        for constraint in constraints {
+            estimated_entries += constraint.bodies().len();
+        }
+
+        if self.bodies.capacity() < estimated_entries {
+            self.bodies
+                .reserve(estimated_entries - self.bodies.capacity());
+        }
+        if self.body_map.capacity() < estimated_entries {
+            self.body_map
+                .reserve(estimated_entries - self.body_map.capacity());
+        }
+        if self.constraint_buckets.capacity() < constraints.len() {
+            self.constraint_buckets
+                .reserve(constraints.len() - self.constraint_buckets.capacity());
+        }
+
         for handle in island_bodies {
             self.ensure_body_entry(*handle, bodies, dt);
         }
@@ -232,6 +351,11 @@ impl SolverWorkspace {
             .resize_with(self.bodies.len(), Vec::new);
         for usage in &mut self.body_bucket_usage {
             usage.clear();
+            let desired =
+                4usize.max(constraints.len().saturating_div(self.bodies.len().max(1)) + 1);
+            if usage.capacity() < desired {
+                usage.reserve(desired - usage.capacity());
+            }
         }
 
         for (constraint_index, constraint) in constraints.iter().enumerate() {
@@ -324,6 +448,39 @@ impl SolverWorkspace {
         self.constraint_body_indices = std::mem::take(&mut scratch.indices);
     }
 
+    fn gather_constraint<C>(
+        &mut self,
+        bodies: &RigidBodySet,
+        constraint: &C,
+        scratch: &mut ConstraintScratchBuffers,
+    ) -> usize
+    where
+        C: AvbdConstraint,
+    {
+        let handles = constraint.bodies();
+        scratch.ensure_capacity(handles.len());
+        scratch.indices.clear();
+
+        for handle in handles.iter().copied() {
+            if let Some(entry_index) = self.body_map.get(&handle).copied() {
+                let slot = scratch.indices.len();
+                let grad = &mut scratch.gradients[slot];
+                grad.fill(0.0);
+                constraint.gradient(bodies, handle, grad);
+
+                scratch.minv_gradients[slot] = self.mass_inverse(entry_index, grad);
+
+                let mut local_hessian = [[0.0; AVBD_DOF]; AVBD_DOF];
+                constraint.hessian(bodies, handle, &mut local_hessian);
+                scratch.hessian_products[slot] = apply_hessian(&local_hessian, grad);
+
+                scratch.indices.push(entry_index);
+            }
+        }
+
+        scratch.indices.len()
+    }
+
     fn mass_inverse(&self, entry_index: usize, grad: &[Real; AVBD_DOF]) -> [Real; AVBD_DOF] {
         let entry = &self.bodies[entry_index];
         let (grad_lin, grad_ang) = split_gradient(grad);
@@ -414,6 +571,9 @@ impl ConstraintScratchBuffers {
         if self.hessian_products.len() < capacity {
             self.hessian_products.resize(capacity, [0.0; AVBD_DOF]);
         }
+        if self.indices.capacity() < capacity {
+            self.indices.reserve(capacity - self.indices.capacity());
+        }
     }
 }
 
@@ -473,6 +633,7 @@ mod tests {
     use super::*;
     use crate::dynamics::{RigidBodyBuilder, RigidBodySet};
     use crate::math::Vector;
+    use approx::relative_eq;
 
     struct DistanceConstraint {
         bodies: [RigidBodyHandle; 2],
@@ -495,6 +656,90 @@ mod tests {
                 direction,
             }
         }
+    }
+
+    fn setup_distance_scene() -> (
+        RigidBodySet,
+        RigidBodyHandle,
+        RigidBodyHandle,
+        DistanceConstraint,
+    ) {
+        let mut bodies = RigidBodySet::new();
+        let h1 = bodies.insert(
+            RigidBodyBuilder::dynamic()
+                .translation(Vector::zeros())
+                .additional_mass(1.0)
+                .build(),
+        );
+        let h2 = bodies.insert(
+            RigidBodyBuilder::dynamic()
+                .translation(Vector::repeat(2.0))
+                .additional_mass(1.0)
+                .build(),
+        );
+
+        if let Some(rb) = bodies.get_mut(h1) {
+            rb.mprops.effective_inv_mass = Vector::repeat(1.0);
+        }
+        if let Some(rb) = bodies.get_mut(h2) {
+            rb.mprops.effective_inv_mass = Vector::repeat(1.0);
+        }
+
+        let direction = Vector::x_axis().into_inner();
+        let constraint = DistanceConstraint::new(h1, h2, 1.0, direction);
+
+        (bodies, h1, h2, constraint)
+    }
+
+    fn execute_distance_scene(params: AvbdSolverParams) -> (Vector<Real>, Vector<Real>, Real) {
+        let (mut bodies, h1, h2, mut constraint) = setup_distance_scene();
+        let mut solver = AvbdSolver::new(params);
+        let handles = vec![h1, h2];
+        solver.solve(
+            &mut bodies,
+            &handles,
+            std::slice::from_mut(&mut constraint),
+            0.01,
+        );
+
+        (
+            bodies[h1].pos.position.translation.vector,
+            bodies[h2].pos.position.translation.vector,
+            constraint.state.lambda,
+        )
+    }
+
+    fn run_reference_pgs(
+        mut p1: Vector<Real>,
+        mut p2: Vector<Real>,
+        direction: Vector<Real>,
+        target: Real,
+        iterations: usize,
+    ) -> (Vector<Real>, Vector<Real>) {
+        let mut dir = direction;
+        let norm = dir.norm();
+        if norm > 0.0 {
+            dir /= norm;
+        }
+
+        let inv_mass1 = 1.0;
+        let inv_mass2 = 1.0;
+        let eff_mass = inv_mass1 + inv_mass2;
+
+        if eff_mass == 0.0 {
+            return (p1, p2);
+        }
+
+        for _ in 0..iterations {
+            let relative = p2 - p1;
+            let c = dir.dot(&relative) - target;
+            let lambda = -c / eff_mass;
+            let correction = dir * lambda;
+            p1 -= correction * inv_mass1;
+            p2 += correction * inv_mass2;
+        }
+
+        (p1, p2)
     }
 
     impl AvbdConstraint for DistanceConstraint {
@@ -548,29 +793,7 @@ mod tests {
 
     #[test]
     fn pulls_bodies_towards_target_distance() {
-        let mut bodies = RigidBodySet::new();
-        let h1 = bodies.insert(
-            RigidBodyBuilder::dynamic()
-                .translation(Vector::zeros())
-                .additional_mass(1.0)
-                .build(),
-        );
-        let h2 = bodies.insert(
-            RigidBodyBuilder::dynamic()
-                .translation(Vector::repeat(2.0))
-                .additional_mass(1.0)
-                .build(),
-        );
-
-        if let Some(rb) = bodies.get_mut(h1) {
-            rb.mprops.effective_inv_mass = Vector::repeat(1.0);
-        }
-        if let Some(rb) = bodies.get_mut(h2) {
-            rb.mprops.effective_inv_mass = Vector::repeat(1.0);
-        }
-
-        let direction = Vector::x_axis().into_inner();
-        let mut constraint = DistanceConstraint::new(h1, h2, 1.0, direction);
+        let (mut bodies, h1, h2, mut constraint) = setup_distance_scene();
 
         let mut solver = AvbdSolver::new(AvbdSolverParams {
             iterations: 10,
@@ -621,16 +844,8 @@ mod tests {
 
     #[test]
     fn augmented_updates_raise_stiffness() {
-        let mut bodies = RigidBodySet::new();
-        let h1 = bodies.insert(RigidBodyBuilder::dynamic().build());
-        let h2 = bodies.insert(
-            RigidBodyBuilder::dynamic()
-                .translation(Vector::repeat(1.0))
-                .build(),
-        );
-
-        let direction = Vector::x_axis().into_inner();
-        let mut constraint = DistanceConstraint::new(h1, h2, 0.0, direction);
+        let (mut bodies, h1, h2, mut constraint) = setup_distance_scene();
+        constraint.target = 0.0;
         let initial_stiffness = constraint.state.stiffness;
 
         let mut solver = AvbdSolver::new(AvbdSolverParams {
@@ -649,5 +864,75 @@ mod tests {
 
         assert!(constraint.state.lambda.abs() > 0.0);
         assert!(constraint.state.stiffness >= initial_stiffness);
+    }
+
+    #[test]
+    fn avbd_matches_reference_distance_solver() {
+        let (mut bodies, h1, h2, mut constraint) = setup_distance_scene();
+        let initial_p1 = bodies[h1].pos.position.translation.vector;
+        let initial_p2 = bodies[h2].pos.position.translation.vector;
+        let iterations = 12;
+
+        let mut solver = AvbdSolver::new(AvbdSolverParams {
+            iterations,
+            alpha: 1.0,
+            beta: 1.0,
+            gamma: 1.0,
+            warmstart: false,
+            ..Default::default()
+        });
+
+        let (ref_p1, ref_p2) = run_reference_pgs(
+            initial_p1,
+            initial_p2,
+            constraint.direction,
+            constraint.target,
+            iterations,
+        );
+
+        let island_handles = vec![h1, h2];
+        solver.solve(
+            &mut bodies,
+            &island_handles,
+            std::slice::from_mut(&mut constraint),
+            0.01,
+        );
+
+        let avbd_p1 = bodies[h1].pos.position.translation.vector;
+        let avbd_p2 = bodies[h2].pos.position.translation.vector;
+
+        let eps: Real = na::convert(1.0e-3);
+        assert!(relative_eq!(
+            avbd_p1,
+            ref_p1,
+            epsilon = eps,
+            max_relative = eps
+        ));
+        assert!(relative_eq!(
+            avbd_p2,
+            ref_p2,
+            epsilon = eps,
+            max_relative = eps
+        ));
+
+        let avbd_dist = constraint.direction.dot(&(avbd_p2 - avbd_p1));
+        let ref_dist = constraint.direction.dot(&(ref_p2 - ref_p1));
+        assert!((avbd_dist - ref_dist).abs() <= eps);
+    }
+
+    #[test]
+    fn avbd_solver_is_deterministic_for_distance_scene() {
+        let params = AvbdSolverParams {
+            iterations: 6,
+            ..Default::default()
+        };
+
+        let (p1_a, p2_a, lambda_a) = execute_distance_scene(params);
+        let (p1_b, p2_b, lambda_b) = execute_distance_scene(params);
+
+        let eps: Real = na::convert(1.0e-6);
+        assert!(relative_eq!(p1_a, p1_b, epsilon = eps, max_relative = eps));
+        assert!(relative_eq!(p2_a, p2_b, epsilon = eps, max_relative = eps));
+        assert!((lambda_a - lambda_b).abs() <= eps);
     }
 }

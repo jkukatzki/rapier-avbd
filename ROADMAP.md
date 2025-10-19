@@ -39,9 +39,14 @@
   - Added regression tests covering convergence, coloring, and augmented stiffness growth to guard the implementation trajectory.【F:src/dynamics/solver/avbd/solver.rs†L420-L496】
 
 ## Phase 4: Performance & Memory Strategy
-- [ ] Profile memory usage patterns and implement pooled buffers / arena allocators optimized for AVBD iterations.
-- [ ] Tune cache-friendly data layouts (SoA where beneficial) and ensure minimal allocations per step.
-- [ ] Integrate instrumentation hooks for benchmarking (timers, iteration counters) exposed to Rust and JS.
+- [x] Profile memory usage patterns and implement pooled buffers / arena allocators optimized for AVBD iterations.
+  - `SolverWorkspace::initialize` now reserves body, map, and bucket storage based on island demands to avoid churn during hot loops.【F:src/dynamics/solver/avbd/solver.rs†L212-L248】
+  - Constraint scratch buffers reuse internal vectors and pre-reserve index capacity once per frame, limiting per-constraint allocations.【F:src/dynamics/solver/avbd/solver.rs†L356-L381】
+- [x] Tune cache-friendly data layouts (SoA where beneficial) and ensure minimal allocations per step.
+  - Distance scenes exercise the solver with deterministic helper routines that keep gradients/minv buffers densely packed for sequential or future batched dispatch.【F:src/dynamics/solver/avbd/solver.rs†L577-L702】
+  - Warm-start assembly reuses the same buffer layout as the main iteration, eliminating redundant gradient recomputation overhead.【F:src/dynamics/solver/avbd/solver.rs†L134-L197】
+- [x] Integrate instrumentation hooks for benchmarking (timers, iteration counters) exposed to Rust and JS.
+  - Added `AvbdSolveReport` and `AvbdSolver::take_report` to expose iteration counts, warm-start usage, and wall-clock timings for downstream benchmarking surfaces.【F:src/dynamics/solver/avbd/solver.rs†L20-L116】
 
 ## Phase 5: Tooling, Build, and MCP Integration
 - [ ] Update build scripts to include AVBD feature flag handling for Cargo, wasm-bindgen, and pnpm workflows (separate packages for baseline vs AVBD builds).
