@@ -3,8 +3,9 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { spawn } = require('node:child_process');
-const { Server } = require('@modelcontextprotocol/sdk/server');
-const { z } = require('@modelcontextprotocol/sdk/zod');
+const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
+const { z } = require('zod');
 
 const WORKSPACE_ROOT = path.resolve(__dirname, '..', '..');
 const SCOREBOARD_PATH = path.join(WORKSPACE_ROOT, 'benchmarks3d', 'scoreboard.json');
@@ -156,15 +157,26 @@ async function runBench({ solver, steps = 120 }) {
     throw new Error(`cargo run failed with code ${code}\n${stderr}`);
   }
 
-  const jsonLine = stdout
-    .split(/\r?\n/)
-    .reverse()
-    .find((line) => line.trim().startsWith('{'));
-  if (!jsonLine) {
+  // Find the JSON output - collect all lines from first '{' to last '}'
+  const lines = stdout.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  let jsonStartIdx = -1;
+  let jsonEndIdx = -1;
+  
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('{') && jsonStartIdx === -1) {
+      jsonStartIdx = i;
+    }
+    if (lines[i].endsWith('}')) {
+      jsonEndIdx = i;
+    }
+  }
+  
+  if (jsonStartIdx === -1 || jsonEndIdx === -1) {
     throw new Error(`unable to parse solver-bench output:\n${stdout}`);
   }
-
-  const metrics = JSON.parse(jsonLine);
+  
+  const jsonText = lines.slice(jsonStartIdx, jsonEndIdx + 1).join('\n');
+  const metrics = JSON.parse(jsonText);
   const commit = (await runCommand('git', ['rev-parse', 'HEAD'])).stdout.trim();
   await fs.mkdir(ARTIFACT_ROOT, { recursive: true });
   const artifactPath = await copyArtifacts(solver, metrics.timestamp_ms, metrics);
@@ -175,72 +187,74 @@ async function runBench({ solver, steps = 120 }) {
 }
 
 function createMcpServer() {
-  const server = new Server({
+  const server = new McpServer({
     name: 'rapier-avbd-mcp',
     version: '0.1.0',
   });
 
-  server.command(
+  server.registerTool(
     'build-wasm',
     {
       description: 'Builds the WASM package for the requested solver backend and dimension.',
-      input: z.object({
+      inputSchema: {
         solver: z.enum(['avbd', 'impulse']).default('avbd'),
         dim: z.enum(['2', '3']).default('3'),
         release: z.boolean().default(true),
-      }),
-      handler: async ({ solver, dim, release }) => {
-        const result = await buildWasm({ solver, dim, release });
-        return {
-          content: [
-            {
-              type: 'text',
-              text: (result.stdout || '').trim() || 'build completed',
-            },
-          ],
-        };
       },
+    },
+    async ({ solver, dim, release }) => {
+      const result = await buildWasm({ solver, dim, release });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: (result.stdout || '').trim() || 'build completed',
+          },
+        ],
+      };
     }
   );
 
-  server.command(
+  server.registerTool(
     'run-bench',
     {
       description: 'Runs the solver-bench harness and records the results to the scoreboard.',
-      input: z.object({
+      inputSchema: {
         solver: z.enum(['avbd', 'impulse']).default('avbd'),
         steps: z.number().int().min(1).default(120),
-      }),
-      handler: async ({ solver, steps }) => {
-        const result = await runBench({ solver, steps });
-        return {
-          content: [
-            {
-              type: 'application/json',
-              data: result.metrics,
-            },
-          ],
-        };
       },
+    },
+    async ({ solver, steps }) => {
+      const result = await runBench({ solver, steps });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result.metrics, null, 2),
+          },
+        ],
+        structuredContent: result.metrics,
+      };
     }
   );
 
-  server.command(
+  server.registerTool(
     'get-scoreboard',
     {
       description: 'Returns the persisted benchmark scoreboard.',
-      input: z.object({}).optional(),
-      handler: async () => {
-        const entries = await readScoreboard();
-        return {
-          content: [
-            {
-              type: 'application/json',
-              data: entries,
-            },
-          ],
-        };
-      },
+      inputSchema: {},
+    },
+    async () => {
+      const entries = await readScoreboard();
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(entries, null, 2),
+          },
+        ],
+        structuredContent: entries,
+      };
     }
   );
 
@@ -253,7 +267,9 @@ async function main() {
   try {
     if (!command || command === 'serve') {
       const server = createMcpServer();
-      await server.start();
+      const transport = new StdioServerTransport();
+      await server.connect(transport);
+      console.error('MCP server running on stdio');
       return;
     }
 

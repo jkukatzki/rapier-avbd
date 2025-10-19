@@ -1,1 +1,56 @@
-[]
+[
+  {
+    "solver": "impulse",
+    "steps": 60,
+    "stack_height": 20,
+    "dt": 0.016666668,
+    "scenario": "stack_drop",
+    "timestamp_ms": 1760883105026,
+    "totals": {
+      "total_ms": 1.7592489999999994,
+      "solver_ms": 0.9276650000000002,
+      "assembly_ms": 0.15258300000000005,
+      "resolution_ms": 0,
+      "writeback_ms": 0.02492000000000001
+    },
+    "averages": {
+      "total_ms": 0.029320816666666655,
+      "solver_ms": 0.015461083333333337,
+      "assembly_ms": 0.0025430500000000007,
+      "resolution_ms": 0,
+      "writeback_ms": 0.0004153333333333335
+    },
+    "constraints": 0,
+    "contacts": 0,
+    "body_count": 21,
+    "commit": "2a8dbbbaa26fda7dfb3195a2f27a6975fdda27c5",
+    "artifactPath": "benchmarks3d/artifacts/1760883105026-impulse"
+  },
+  {
+    "solver": "avbd",
+    "steps": 60,
+    "stack_height": 20,
+    "dt": 0.016666668,
+    "scenario": "stack_drop",
+    "timestamp_ms": 1760883122920,
+    "totals": {
+      "total_ms": 0.7074609999999998,
+      "solver_ms": 0.17712199999999997,
+      "assembly_ms": 0.0051270000000000005,
+      "resolution_ms": 0,
+      "writeback_ms": 0.002207999999999999
+    },
+    "averages": {
+      "total_ms": 0.011791016666666662,
+      "solver_ms": 0.002952033333333333,
+      "assembly_ms": 0.00008545,
+      "resolution_ms": 0,
+      "writeback_ms": 0.000036799999999999986
+    },
+    "constraints": 0,
+    "contacts": 0,
+    "body_count": 21,
+    "commit": "2a8dbbbaa26fda7dfb3195a2f27a6975fdda27c5",
+    "artifactPath": "benchmarks3d/artifacts/1760883122920-avbd"
+  }
+]
