@@ -1,4 +1,7 @@
 use crate::math::Real;
+
+#[cfg(feature = "solver_avbd")]
+use super::solver::AvbdSolverParams;
 use na::RealField;
 
 #[cfg(feature = "serde-serialize")]
@@ -46,7 +49,15 @@ pub enum SolverBackend {
 
 impl Default for SolverBackend {
     fn default() -> Self {
-        Self::Impulse
+        #[cfg(feature = "solver_avbd")]
+        {
+            Self::Avbd
+        }
+
+        #[cfg(not(feature = "solver_avbd"))]
+        {
+            Self::Impulse
+        }
     }
 }
 
@@ -173,6 +184,9 @@ pub struct IntegrationParameters {
     pub num_solver_iterations: usize,
     /// Selects the solver backend used for constraints resolution.
     pub solver_backend: SolverBackend,
+    /// Parameters specific to the AVBD solver backend.
+    #[cfg(feature = "solver_avbd")]
+    pub avbd_solver: AvbdSolverParams,
     /// Number of internal Project Gauss Seidel (PGS) iterations run at each solver iteration (default: `1`).
     pub num_internal_pgs_iterations: usize,
     /// The number of stabilization iterations run at each solver iterations (default: `1`).
@@ -357,6 +371,8 @@ impl Default for IntegrationParameters {
             num_internal_stabilization_iterations: 1,
             num_solver_iterations: 4,
             solver_backend: SolverBackend::default(),
+            #[cfg(feature = "solver_avbd")]
+            avbd_solver: AvbdSolverParams::default(),
             // TODO: what is the optimal value for min_island_size?
             // It should not be too big so that we don't end up with
             // huge islands that don't fit in cache.

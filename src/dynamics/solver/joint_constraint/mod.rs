@@ -1,4 +1,6 @@
-pub use joint_velocity_constraint::{JointSolverBody, MotorParameters, WritebackId};
+#[allow(unused_imports)]
+pub use crate::dynamics::solver::MotorParameters;
+pub use joint_velocity_constraint::{JointSolverBody, WritebackId};
 
 pub use any_joint_constraint::AnyJointConstraintMut;
 pub use generic_joint_constraint::GenericJointConstraint;

@@ -5,35 +5,11 @@ use crate::dynamics::{
 };
 use crate::math::{AngVector, AngularInertia, DIM, Isometry, Point, Real, SPATIAL_DIM, Vector};
 use crate::utils::{SimdDot, SimdRealCopy};
-
 use crate::dynamics::solver::solver_body::SolverBodies;
 #[cfg(feature = "simd-is-enabled")]
 use crate::math::{SIMD_WIDTH, SimdReal};
 #[cfg(feature = "dim2")]
 use crate::num::Zero;
-
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub struct MotorParameters<N: SimdRealCopy> {
-    pub erp_inv_dt: N,
-    pub cfm_coeff: N,
-    pub cfm_gain: N,
-    pub target_pos: N,
-    pub target_vel: N,
-    pub max_impulse: N,
-}
-
-impl<N: SimdRealCopy> Default for MotorParameters<N> {
-    fn default() -> Self {
-        Self {
-            erp_inv_dt: N::zero(),
-            cfm_coeff: N::zero(),
-            cfm_gain: N::zero(),
-            target_pos: N::zero(),
-            target_vel: N::zero(),
-            max_impulse: N::zero(),
-        }
-    }
-}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum WritebackId {

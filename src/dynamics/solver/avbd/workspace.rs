@@ -75,4 +75,4 @@ pub(crate) fn new_workspace_body(
         initial_pose,
         pose,
     }
-} 
+}
