@@ -41,6 +41,7 @@ pub enum FrictionModel {
 #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
 pub enum SolverBackend {
     /// The classic sequential impulse / PGS solver currently used by Rapier.
+    #[cfg(any(not(feature = "solver_avbd"), test))]
     Impulse,
     /// Experimental Augmented Vertex Block Descent backend.
     #[cfg(feature = "solver_avbd")]
@@ -188,8 +189,10 @@ pub struct IntegrationParameters {
     #[cfg(feature = "solver_avbd")]
     pub avbd_solver: AvbdSolverParams,
     /// Number of internal Project Gauss Seidel (PGS) iterations run at each solver iteration (default: `1`).
+    #[cfg(any(not(feature = "solver_avbd"), test))]
     pub num_internal_pgs_iterations: usize,
     /// The number of stabilization iterations run at each solver iterations (default: `1`).
+    #[cfg(any(not(feature = "solver_avbd"), test))]
     pub num_internal_stabilization_iterations: usize,
     /// Minimum number of dynamic bodies on each active island (default: `128`).
     pub min_island_size: usize,
@@ -367,12 +370,14 @@ impl Default for IntegrationParameters {
             joint_natural_frequency: 1.0e6,
             joint_damping_ratio: 1.0,
             warmstart_coefficient: 1.0,
-            num_internal_pgs_iterations: 1,
-            num_internal_stabilization_iterations: 1,
             num_solver_iterations: 4,
             solver_backend: SolverBackend::default(),
             #[cfg(feature = "solver_avbd")]
             avbd_solver: AvbdSolverParams::default(),
+            #[cfg(any(not(feature = "solver_avbd"), test))]
+            num_internal_pgs_iterations: 1,
+            #[cfg(any(not(feature = "solver_avbd"), test))]
+            num_internal_stabilization_iterations: 1,
             // TODO: what is the optimal value for min_island_size?
             // It should not be too big so that we don't end up with
             // huge islands that don't fit in cache.

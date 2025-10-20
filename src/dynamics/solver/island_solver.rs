@@ -1,3 +1,4 @@
+#[cfg(any(not(feature = "solver_avbd"), test))]
 mod impulse_impl {
     use crate::counters::Counters;
     use crate::dynamics::IslandManager;
@@ -109,24 +110,28 @@ pub(crate) use impulse_impl::IslandSolver;
 
 #[cfg(feature = "solver_avbd")]
 mod avbd_impl {
-    use super::impulse_impl;
     use crate::counters::Counters;
     use crate::dynamics::IslandManager;
+    #[cfg(any(not(feature = "solver_avbd"), test))]
+    use crate::dynamics::SolverBackend;
     use crate::dynamics::solver::avbd::{
         AvbdAnyConstraint, AvbdConstraint, AvbdContactConstraint, AvbdContactFrictionConstraint,
         AvbdSolver,
     };
     use crate::dynamics::{
         IntegrationParameters, JointGraphEdge, JointIndex, RigidBodySet, RigidBodyType,
-        SolverBackend,
     };
     use crate::geometry::{ContactManifold, ContactManifoldIndex};
     use crate::prelude::{MultibodyJointSet, RigidBodyVelocity};
     use parry::math::Real;
 
+    #[cfg(any(not(feature = "solver_avbd"), test))]
+    use super::impulse_impl;
+
     pub struct IslandSolver {
         solver: AvbdSolver,
         constraints: Vec<AvbdAnyConstraint>,
+        #[cfg(any(not(feature = "solver_avbd"), test))]
         impulse: impulse_impl::IslandSolver,
     }
 
@@ -141,6 +146,7 @@ mod avbd_impl {
             Self {
                 solver: AvbdSolver::new(Default::default()),
                 constraints: Vec::new(),
+                #[cfg(any(not(feature = "solver_avbd"), test))]
                 impulse: impulse_impl::IslandSolver::new(),
             }
         }
@@ -160,6 +166,7 @@ mod avbd_impl {
             joint_indices: &[JointIndex],
             multibodies: &mut MultibodyJointSet,
         ) {
+            #[cfg(any(not(feature = "solver_avbd"), test))]
             if base_params.solver_backend == SolverBackend::Impulse {
                 self.constraints.clear();
                 self.impulse.init_and_solve(
@@ -176,6 +183,9 @@ mod avbd_impl {
                 );
                 return;
             }
+
+            #[cfg(all(feature = "solver_avbd", not(test)))]
+            let _ = (impulse_joints, joint_indices, multibodies);
 
             let mut solver_params = base_params.avbd_solver;
             solver_params.iterations = base_params.num_solver_iterations
@@ -206,6 +216,7 @@ mod avbd_impl {
             counters.solver.velocity_writeback_time.resume();
             self.writeback_contacts(manifolds);
             counters.solver.velocity_writeback_time.pause();
+            #[cfg(all(feature = "solver_avbd", not(test)))]
             let _ = impulse_joints;
         }
 

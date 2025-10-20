@@ -168,19 +168,26 @@ pub(crate) fn update_ui(
                 Slider::new(&mut integration_parameters.num_solver_iterations, 0..=10)
                     .text("num solver iters."),
             );
-            ui.add(
-                Slider::new(
-                    &mut integration_parameters.num_internal_pgs_iterations,
-                    1..=40,
-                )
-                .text("num internal PGS iters."),
-            );
-            ui.add(
-                Slider::new(
-                    &mut integration_parameters.num_internal_stabilization_iterations,
-                    0..=100,
-                )
-                .text("max internal stabilization iters."),
+            #[cfg(not(feature = "solver_avbd"))]
+            {
+                ui.add(
+                    Slider::new(
+                        &mut integration_parameters.num_internal_pgs_iterations,
+                        1..=40,
+                    )
+                    .text("num internal PGS iters."),
+                );
+                ui.add(
+                    Slider::new(
+                        &mut integration_parameters.num_internal_stabilization_iterations,
+                        0..=100,
+                    )
+                    .text("max internal stabilization iters."),
+                );
+            }
+            #[cfg(feature = "solver_avbd")]
+            ui.label(
+                "PGS tuning parameters are unavailable when the AVBD solver feature is enabled.",
             );
             ui.add(
                 Slider::new(&mut integration_parameters.warmstart_coefficient, 0.0..=1.0)

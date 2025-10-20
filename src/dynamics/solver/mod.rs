@@ -6,10 +6,7 @@ pub(crate) use self::island_solver::IslandSolver;
 // pub(self) use self::parallel_solver_constraints::ParallelSolverConstraints;
 // #[cfg(feature = "parallel")]
 // pub(self) use self::parallel_velocity_solver::ParallelVelocitySolver;
-#[cfg(not(feature = "solver_avbd"))]
-use self::velocity_solver::VelocitySolver;
-
-use contact_constraint::*;
+pub(crate) use contact_constraint::*;
 pub use joint_constraint::*;
 use solver_body::SolverVel;
 
@@ -54,6 +51,7 @@ mod solver_body;
     feature = "solver_avbd",
     allow(dead_code, unused_imports, unused_variables)
 )]
+#[cfg(any(not(feature = "solver_avbd"), test))]
 mod velocity_solver;
 
 mod motor_parameters;
