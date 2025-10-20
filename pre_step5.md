@@ -9,7 +9,7 @@
 - [x] Feed the island solver with an AVBD path that stages bodies, gathers Rapier contacts/joints into pooled constraint structs, and writes back after solving.
 - [x] Build reusable contact constraint pools with nalgebra-backed gradient caching; joint pooling remains pending once the joint path lands.
 - [ ] Update Cargo features, build scripts, and the HTML demo so the solver feature cleanly switches between AVBD and legacy PGS builds.
-- [ ] Add integration tests exercising ground-plane stabilization, impulse parity, and determinism using the new pooled constraints.
+- [x] Add integration tests exercising ground-plane stabilization, impulse parity, and determinism using the new pooled constraints.
 - [ ] Refresh benchmarks to sample the paper's parameter sweep (iteration counts, stiffness ranges) under the AVBD feature flag.
 
 ### Immediate focus
@@ -23,3 +23,4 @@
 - Added a feature-gated AVBD island solver that assembles pooled contact constraints from manifolds, feeds them to the staged workspace, and restores warm-start impulses after solving.【F:src/dynamics/solver/island_solver.rs†L1-L170】【F:src/dynamics/solver/avbd/contact.rs†L1-L222】
 - Drafting the solver gating and public API shims required to build cleanly without the legacy PGS modules active.
 - Hoisted `MotorParameters` into a shared module, re-exported `ContactManifoldExt`, and wired up the drop tests so `cargo check --all-targets --features solver_avbd` succeeds without compiling the PGS solver path.【F:src/dynamics/solver/motor_parameters.rs†L1-L21】【F:src/geometry/mod.rs†L1-L26】【29b6f6†L1-L3】
+- Implemented tangential friction constraints and writeback for AVBD contacts, added an impulse-solver fallback behind `SolverBackend`, and extended the drop regression tests with AVBD-vs-impulse deviation checks.【F:src/dynamics/solver/avbd/contact.rs†L400-L520】【F:src/dynamics/solver/island_solver.rs†L140-L304】【F:src/dynamics/solver/avbd/tests.rs†L16-L150】

@@ -4,7 +4,7 @@ use approx::assert_relative_eq;
 
 use crate::dynamics::{
     CCDSolver, ImpulseJointSet, IntegrationParameters, IslandManager, MultibodyJointSet,
-    RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
+    RigidBodyBuilder, RigidBodyHandle, RigidBodySet, SolverBackend,
 };
 use crate::geometry::{BroadPhaseBvh, ColliderBuilder, ColliderHandle, ColliderSet, NarrowPhase};
 use crate::math::{AngVector, Real, Vector};
@@ -16,7 +16,7 @@ use crate::geometry::ContactManifoldExt;
 #[cfg(feature = "dim3")]
 #[test]
 fn avbd_cube_stays_above_ground() {
-    let outcome = run_drop_test(120);
+    let outcome = run_drop_test(120, SolverBackend::Avbd);
     assert!(outcome.translation.y >= -1.0e-4, "cube penetrated plane");
 
     let mass = outcome.mass;
@@ -33,8 +33,8 @@ fn avbd_cube_stays_above_ground() {
 #[cfg(feature = "dim3")]
 #[test]
 fn avbd_drop_is_deterministic() {
-    let outcome_a = run_drop_test(90);
-    let outcome_b = run_drop_test(90);
+    let outcome_a = run_drop_test(90, SolverBackend::Avbd);
+    let outcome_b = run_drop_test(90, SolverBackend::Avbd);
 
     assert_relative_eq!(
         outcome_a.translation,
@@ -59,6 +59,34 @@ fn avbd_drop_is_deterministic() {
 }
 
 #[cfg(feature = "dim3")]
+#[test]
+fn avbd_matches_impulse_baseline() {
+    let impulse_outcome = run_drop_test(120, SolverBackend::Impulse);
+    let avbd_outcome = run_drop_test(120, SolverBackend::Avbd);
+
+    assert_relative_eq!(
+        avbd_outcome.translation,
+        impulse_outcome.translation,
+        epsilon = 5.0e-3,
+        max_relative = 5.0e-3,
+    );
+
+    assert_relative_eq!(
+        avbd_outcome.angvel,
+        impulse_outcome.angvel,
+        epsilon = 5.0e-3,
+        max_relative = 5.0e-3,
+    );
+
+    assert_relative_eq!(
+        avbd_outcome.normal_impulse,
+        impulse_outcome.normal_impulse,
+        epsilon = 5.0e-2,
+        max_relative = 5.0e-2,
+    );
+}
+
+#[cfg(feature = "dim3")]
 struct DropOutcome {
     translation: Vector<Real>,
     angvel: AngVector<Real>,
@@ -69,11 +97,12 @@ struct DropOutcome {
 }
 
 #[cfg(feature = "dim3")]
-fn run_drop_test(steps: usize) -> DropOutcome {
+fn run_drop_test(steps: usize, backend: SolverBackend) -> DropOutcome {
     let mut pipeline = PhysicsPipeline::new();
     let gravity = Vector::new(0.0, -9.81, 0.0);
     let mut integration_parameters = IntegrationParameters::default();
     integration_parameters.dt = 1.0 / 60.0;
+    integration_parameters.solver_backend = backend;
 
     let mut islands = IslandManager::new();
     let mut broad_phase = BroadPhaseBvh::new();

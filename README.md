@@ -1,3 +1,5 @@
+cargo test --features solver_avbd      
+cargo run --release --bin all_examples3 --features solver_avbd
 <p align="center">
   <img src="https://www.rapier.rs/img/rapier_logo_color_textpath_dark.svg" alt="crates.io">
 </p>

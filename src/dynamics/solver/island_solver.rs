@@ -1,9 +1,9 @@
-#[cfg(not(feature = "solver_avbd"))]
-mod impulse {
+mod impulse_impl {
     use crate::counters::Counters;
     use crate::dynamics::IslandManager;
     use crate::dynamics::solver::contact_constraint::ContactConstraintsSet;
-    use crate::dynamics::solver::{JointConstraintsSet, VelocitySolver};
+    use crate::dynamics::solver::joint_constraint::JointConstraintsSet;
+    use crate::dynamics::solver::velocity_solver::VelocitySolver;
     use crate::dynamics::{IntegrationParameters, JointGraphEdge, JointIndex, RigidBodySet};
     use crate::geometry::{ContactManifold, ContactManifoldIndex};
     use crate::prelude::MultibodyJointSet;
@@ -105,17 +105,20 @@ mod impulse {
 }
 
 #[cfg(not(feature = "solver_avbd"))]
-pub(crate) use impulse::IslandSolver;
+pub(crate) use impulse_impl::IslandSolver;
 
 #[cfg(feature = "solver_avbd")]
 mod avbd_impl {
+    use super::impulse_impl;
     use crate::counters::Counters;
     use crate::dynamics::IslandManager;
     use crate::dynamics::solver::avbd::{
-        AvbdAnyConstraint, AvbdConstraint, AvbdContactConstraint, AvbdSolver,
+        AvbdAnyConstraint, AvbdConstraint, AvbdContactConstraint, AvbdContactFrictionConstraint,
+        AvbdSolver,
     };
     use crate::dynamics::{
         IntegrationParameters, JointGraphEdge, JointIndex, RigidBodySet, RigidBodyType,
+        SolverBackend,
     };
     use crate::geometry::{ContactManifold, ContactManifoldIndex};
     use crate::prelude::{MultibodyJointSet, RigidBodyVelocity};
@@ -124,6 +127,7 @@ mod avbd_impl {
     pub struct IslandSolver {
         solver: AvbdSolver,
         constraints: Vec<AvbdAnyConstraint>,
+        impulse: impulse_impl::IslandSolver,
     }
 
     impl Default for IslandSolver {
@@ -137,6 +141,7 @@ mod avbd_impl {
             Self {
                 solver: AvbdSolver::new(Default::default()),
                 constraints: Vec::new(),
+                impulse: impulse_impl::IslandSolver::new(),
             }
         }
 
@@ -152,9 +157,26 @@ mod avbd_impl {
             manifolds: &mut [&mut ContactManifold],
             manifold_indices: &[ContactManifoldIndex],
             impulse_joints: &mut [JointGraphEdge],
-            _joint_indices: &[JointIndex],
-            _multibodies: &mut MultibodyJointSet,
+            joint_indices: &[JointIndex],
+            multibodies: &mut MultibodyJointSet,
         ) {
+            if base_params.solver_backend == SolverBackend::Impulse {
+                self.constraints.clear();
+                self.impulse.init_and_solve(
+                    island_id,
+                    counters,
+                    base_params,
+                    islands,
+                    bodies,
+                    manifolds,
+                    manifold_indices,
+                    impulse_joints,
+                    joint_indices,
+                    multibodies,
+                );
+                return;
+            }
+
             let mut solver_params = base_params.avbd_solver;
             solver_params.iterations = base_params.num_solver_iterations
                 + islands.active_island_additional_solver_iterations(island_id);
@@ -199,7 +221,7 @@ mod avbd_impl {
                     let manifold_ref: &ContactManifold = &**manifold;
                     for contact_index in 0..manifold_ref.data.solver_contacts.len() {
                         let solver_contact = &manifold_ref.data.solver_contacts[contact_index];
-                        if let Some(constraint) = AvbdContactConstraint::new(
+                        if let Some(contact_constraint) = AvbdContactConstraint::new(
                             manifold_id,
                             contact_index,
                             manifold_ref,
@@ -207,8 +229,18 @@ mod avbd_impl {
                             bodies,
                             stiffness,
                         ) {
-                            self.constraints
-                                .push(AvbdAnyConstraint::Contact(constraint));
+                            let boxed = Box::new(contact_constraint);
+                            let friction_constraints = AvbdContactFrictionConstraint::from_contact(
+                                boxed.as_ref(),
+                                solver_contact,
+                                stiffness,
+                            );
+                            self.constraints.push(AvbdAnyConstraint::Contact(boxed));
+                            self.constraints.extend(
+                                friction_constraints
+                                    .into_iter()
+                                    .map(AvbdAnyConstraint::ContactFriction),
+                            );
                         }
                     }
                 }
@@ -218,22 +250,54 @@ mod avbd_impl {
         fn writeback_contacts(&mut self, manifolds: &mut [&mut ContactManifold]) {
             let dt = self.solver.timestep();
             for constraint in &self.constraints {
-                if let Some(contact) = constraint.contact() {
-                    if let Some(manifold) = manifolds.get_mut(contact.manifold_index()) {
-                        let lambda = contact.state().lambda;
-                        let impulse = if dt > 0.0 { lambda / dt } else { 0.0 };
-                        if let Some(solver_contact) = (*manifold)
-                            .data
-                            .solver_contacts
-                            .get_mut(contact.solver_contact_index())
-                        {
-                            solver_contact.warmstart_impulse = lambda;
-                            solver_contact.is_new = 0.0;
-                        }
+                match constraint {
+                    AvbdAnyConstraint::Contact(contact_box) => {
+                        let contact = contact_box.as_ref();
+                        if let Some(manifold) = manifolds.get_mut(contact.manifold_index()) {
+                            let lambda = contact.state().lambda;
+                            let impulse = if dt > 0.0 { lambda / dt } else { 0.0 };
+                            if let Some(solver_contact) = (*manifold)
+                                .data
+                                .solver_contacts
+                                .get_mut(contact.solver_contact_index())
+                            {
+                                solver_contact.warmstart_impulse = lambda;
+                                solver_contact.is_new = 0.0;
+                            }
 
-                        if let Some(point) = manifold.points.get_mut(contact.contact_point_index())
-                        {
-                            point.data.impulse = impulse.max(0.0);
+                            if let Some(point) =
+                                manifold.points.get_mut(contact.contact_point_index())
+                            {
+                                point.data.impulse = impulse.max(0.0);
+                            }
+                        }
+                    }
+                    AvbdAnyConstraint::ContactFriction(friction) => {
+                        if let Some(manifold) = manifolds.get_mut(friction.manifold_index()) {
+                            let lambda = friction.state().lambda;
+                            let impulse = if dt > 0.0 { lambda / dt } else { 0.0 };
+                            if let Some(solver_contact) = (*manifold)
+                                .data
+                                .solver_contacts
+                                .get_mut(friction.solver_contact_index())
+                            {
+                                let mut warmstart = solver_contact.warmstart_tangent_impulse;
+                                warmstart[friction.tangent_component()] = lambda;
+                                solver_contact.warmstart_tangent_impulse = warmstart;
+                                solver_contact.is_new = 0.0;
+                            }
+
+                            if let Some(point) =
+                                manifold.points.get_mut(friction.contact_point_index())
+                            {
+                                let mut tangent = point.data.tangent_impulse;
+                                tangent[friction.tangent_component()] = impulse;
+                                point.data.tangent_impulse = tangent;
+
+                                let mut warmstart = point.data.warmstart_tangent_impulse;
+                                warmstart[friction.tangent_component()] = lambda;
+                                point.data.warmstart_tangent_impulse = warmstart;
+                            }
                         }
                     }
                 }
