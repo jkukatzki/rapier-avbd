@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@dimforge/rapier3d": "^0.19.2",
+    "vite": "^7.1.11"
+  }
+}
