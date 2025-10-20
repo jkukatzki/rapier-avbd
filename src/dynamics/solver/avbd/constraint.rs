@@ -63,4 +63,21 @@ pub trait AvbdConstraint {
         body: RigidBodyHandle,
         out: &mut [[Real; AVBD_DOF]; AVBD_DOF],
     );
+
+    /// Projects the dual variable into the feasible set for this constraint.
+    ///
+    /// Defaults to the identity (no projection). Contact constraints overload this
+    /// to enforce the non-negativity of the normal impulse.
+    fn project_lambda(&self, lambda: Real) -> Real {
+        lambda
+    }
+
+    /// Returns the relative normal velocity associated with this constraint, if applicable.
+    fn relative_normal_velocity(
+        &self,
+        _bodies: &RigidBodySet,
+        _workspace: &AvbdBodySet,
+    ) -> Option<Real> {
+        None
+    }
 }

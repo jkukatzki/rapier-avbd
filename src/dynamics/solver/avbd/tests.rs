@@ -108,7 +108,6 @@ fn run_drop_test(steps: usize) -> DropOutcome {
     let translation = *cube_rb.translation();
     let angvel = *cube_rb.angvel();
     let mass = cube_rb.mass();
-
     let normal_impulse = narrow_phase
         .contact_pair(ground_collider, cube_collider)
         .map(|pair| {

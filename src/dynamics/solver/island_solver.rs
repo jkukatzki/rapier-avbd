@@ -114,9 +114,11 @@ mod avbd_impl {
     use crate::dynamics::solver::avbd::{
         AvbdAnyConstraint, AvbdConstraint, AvbdContactConstraint, AvbdSolver,
     };
-    use crate::dynamics::{IntegrationParameters, JointGraphEdge, JointIndex, RigidBodySet};
+    use crate::dynamics::{
+        IntegrationParameters, JointGraphEdge, JointIndex, RigidBodySet, RigidBodyType,
+    };
     use crate::geometry::{ContactManifold, ContactManifoldIndex};
-    use crate::prelude::MultibodyJointSet;
+    use crate::prelude::{MultibodyJointSet, RigidBodyVelocity};
     use parry::math::Real;
 
     pub struct IslandSolver {
@@ -169,13 +171,14 @@ mod avbd_impl {
             counters.solver.velocity_assembly_time.pause();
 
             counters.solver.velocity_resolution_time.resume();
-            let dt = if solver_params.iterations > 0 {
-                base_params.dt / solver_params.iterations as Real
-            } else {
-                base_params.dt
-            };
-            self.solver
-                .solve(bodies, &mut self.constraints[..], dt.max(Real::EPSILON));
+            if self.constraints.is_empty() {
+                self.integrate_unconstrained_bodies(island_id, islands, bodies, base_params);
+                counters.solver.velocity_resolution_time.pause();
+                return;
+            }
+
+            let dt = base_params.dt.max(Real::EPSILON);
+            self.solver.solve(bodies, &mut self.constraints[..], dt);
             counters.solver.velocity_resolution_time.pause();
 
             counters.solver.velocity_writeback_time.resume();
@@ -213,17 +216,60 @@ mod avbd_impl {
         }
 
         fn writeback_contacts(&mut self, manifolds: &mut [&mut ContactManifold]) {
+            let dt = self.solver.timestep();
             for constraint in &self.constraints {
                 if let Some(contact) = constraint.contact() {
                     if let Some(manifold) = manifolds.get_mut(contact.manifold_index()) {
+                        let lambda = contact.state().lambda;
+                        let impulse = if dt > 0.0 { lambda / dt } else { 0.0 };
                         if let Some(solver_contact) = (*manifold)
                             .data
                             .solver_contacts
                             .get_mut(contact.solver_contact_index())
                         {
-                            solver_contact.warmstart_impulse = contact.state().lambda;
+                            solver_contact.warmstart_impulse = lambda;
+                            solver_contact.is_new = 0.0;
+                        }
+
+                        if let Some(point) = manifold.points.get_mut(contact.contact_point_index())
+                        {
+                            point.data.impulse = impulse.max(0.0);
                         }
                     }
+                }
+            }
+        }
+
+        fn integrate_unconstrained_bodies(
+            &mut self,
+            island_id: usize,
+            islands: &IslandManager,
+            bodies: &mut RigidBodySet,
+            params: &IntegrationParameters,
+        ) {
+            let _ = self;
+            let dt = params.dt;
+            let inv_dt = params.inv_dt();
+
+            for handle in islands.active_island(island_id) {
+                let rb = bodies.index_mut_internal(*handle);
+
+                if rb.body_type != RigidBodyType::Dynamic || !rb.is_enabled() {
+                    continue;
+                }
+
+                let mut new_vels = rb.forces.integrate(dt, &rb.vels, &rb.mprops);
+                new_vels = new_vels.apply_damping(dt, &rb.damping);
+                rb.vels = new_vels;
+                rb.pos.next_position =
+                    new_vels.integrate(dt, &rb.pos.position, &rb.mprops.local_mprops.local_com);
+
+                if rb.ccd.ccd_enabled {
+                    rb.ccd_vels = rb
+                        .pos
+                        .interpolate_velocity(inv_dt, rb.local_center_of_mass());
+                } else {
+                    rb.ccd_vels = RigidBodyVelocity::zero();
                 }
             }
         }

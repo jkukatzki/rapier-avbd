@@ -75,6 +75,22 @@ impl AvbdConstraint for AvbdAnyConstraint {
             AvbdAnyConstraint::Contact(c) => c.hessian(bodies, workspace, body, out),
         }
     }
+
+    fn project_lambda(&self, lambda: Real) -> Real {
+        match self {
+            AvbdAnyConstraint::Contact(c) => c.project_lambda(lambda),
+        }
+    }
+
+    fn relative_normal_velocity(
+        &self,
+        bodies: &RigidBodySet,
+        workspace: &AvbdBodySet,
+    ) -> Option<Real> {
+        match self {
+            AvbdAnyConstraint::Contact(c) => c.relative_normal_velocity(bodies, workspace),
+        }
+    }
 }
 
 /// AVBD contact constraint derived from a Rapier contact manifold point.
@@ -83,7 +99,10 @@ pub struct AvbdContactConstraint {
     body_count: usize,
     state: AvbdConstraintState,
     normal: Vector<Real>,
+    base_distance: Real,
     local_points: [Point<Real>; 2],
+    is_new_contact: bool,
+    contact_point_id: usize,
     manifold_index: ContactManifoldIndex,
     solver_contact_index: usize,
 }
@@ -108,14 +127,22 @@ impl AvbdContactConstraint {
         let local_p2 = rb2.pos.position.inverse_transform_point(&world_point);
 
         let bodies_array = [handle1, handle2];
-        let state = AvbdConstraintState::new(contact.warmstart_impulse, stiffness);
+        let mut state = AvbdConstraintState::new(contact.warmstart_impulse, stiffness);
+        let warmstart_negative = state.lambda < 0.0;
+        if warmstart_negative {
+            state.lambda = 0.0;
+        }
+        let contact_point_id = contact.contact_id[0] as usize;
 
         Some(Self {
             bodies: bodies_array,
             body_count: 2,
             state,
             normal: manifold.data.normal,
+            base_distance: contact.dist,
             local_points: [local_p1, local_p2],
+            is_new_contact: !warmstart_negative && contact.is_new > 0.5,
+            contact_point_id,
             manifold_index,
             solver_contact_index,
         })
@@ -127,6 +154,10 @@ impl AvbdContactConstraint {
 
     pub fn solver_contact_index(&self) -> usize {
         self.solver_contact_index
+    }
+
+    pub fn contact_point_index(&self) -> usize {
+        self.contact_point_id
     }
 
     fn body_slot(&self, handle: RigidBodyHandle) -> Option<usize> {
@@ -217,7 +248,7 @@ impl AvbdConstraint for AvbdContactConstraint {
             p1
         };
 
-        (p2 - p1).dot(&self.normal)
+        (p2 - p1).dot(&self.normal) + self.base_distance
     }
 
     fn gradient(
@@ -268,5 +299,36 @@ impl AvbdConstraint for AvbdContactConstraint {
                 *entry = 0.0;
             }
         }
+    }
+
+    fn project_lambda(&self, lambda: Real) -> Real {
+        lambda.max(0.0)
+    }
+
+    fn relative_normal_velocity(
+        &self,
+        bodies: &RigidBodySet,
+        workspace: &AvbdBodySet,
+    ) -> Option<Real> {
+        if !self.is_new_contact {
+            return None;
+        }
+
+        let linvel1 = workspace
+            .state(self.bodies[0])
+            .map(|s| s.predicted_linvel().clone())
+            .or_else(|| bodies.get(self.bodies[0]).map(|rb| rb.linvel().clone()))?;
+
+        let linvel2 = if self.body_count > 1 {
+            workspace
+                .state(self.bodies[1])
+                .map(|s| s.predicted_linvel().clone())
+                .or_else(|| bodies.get(self.bodies[1]).map(|rb| rb.linvel().clone()))
+                .unwrap_or(Vector::zeros())
+        } else {
+            Vector::zeros()
+        };
+
+        Some((linvel2 - linvel1).dot(&self.normal))
     }
 }

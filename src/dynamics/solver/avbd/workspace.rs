@@ -9,6 +9,8 @@ pub(crate) struct WorkspaceBody {
     pub inv_inertia: AngularInertia<Real>,
     pub initial_pose: Isometry<Real>,
     pub pose: Isometry<Real>,
+    pub initial_linvel: Vector<Real>,
+    pub predicted_linvel: Vector<Real>,
 }
 
 pub struct AvbdBodyState<'a> {
@@ -26,6 +28,14 @@ impl<'a> AvbdBodyState<'a> {
 
     pub fn initial_pose(&self) -> &Isometry<Real> {
         &self.entry.initial_pose
+    }
+
+    pub fn initial_linvel(&self) -> &Vector<Real> {
+        &self.entry.initial_linvel
+    }
+
+    pub fn predicted_linvel(&self) -> &Vector<Real> {
+        &self.entry.predicted_linvel
     }
 
     pub fn inv_mass(&self) -> &Vector<Real> {
@@ -67,6 +77,8 @@ pub(crate) fn new_workspace_body(
     inv_inertia: AngularInertia<Real>,
     initial_pose: Isometry<Real>,
     pose: Isometry<Real>,
+    initial_linvel: Vector<Real>,
+    predicted_linvel: Vector<Real>,
 ) -> WorkspaceBody {
     WorkspaceBody {
         handle,
@@ -74,5 +86,7 @@ pub(crate) fn new_workspace_body(
         inv_inertia,
         initial_pose,
         pose,
+        initial_linvel,
+        predicted_linvel,
     }
 }

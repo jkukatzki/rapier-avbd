@@ -18,6 +18,7 @@ pub struct AvbdSolver {
     grad_scratch: Vec<[Real; AVBD_DOF]>,
     minv_scratch: Vec<[Real; AVBD_DOF]>,
     entry_scratch: Vec<usize>,
+    dt: Real,
 }
 
 impl AvbdSolver {
@@ -29,6 +30,7 @@ impl AvbdSolver {
             grad_scratch: Vec::new(),
             minv_scratch: Vec::new(),
             entry_scratch: Vec::new(),
+            dt: 1.0,
         }
     }
 
@@ -42,6 +44,11 @@ impl AvbdSolver {
         &mut self.params
     }
 
+    /// Returns the timestep used during the last `solve` call.
+    pub fn timestep(&self) -> Real {
+        self.dt
+    }
+
     /// Executes an AVBD solve pass for the supplied rigid bodies and constraints.
     pub fn solve<C>(&mut self, bodies: &mut RigidBodySet, constraints: &mut [C], dt: Real)
     where
@@ -51,6 +58,7 @@ impl AvbdSolver {
             return;
         }
 
+        self.dt = dt;
         self.workspace.initialize(bodies, constraints, dt);
         let warm_lambda = self.params.alpha * self.params.gamma;
         let stiffness_decay = self.params.gamma;
@@ -84,8 +92,23 @@ impl AvbdSolver {
         self.entry_scratch.clear();
 
         let bodies_view = &*bodies;
-        let (delta_lambda, new_lambda, new_stiffness) = {
+        let (delta_lambda, projected_lambda, new_stiffness) = {
             let body_view = self.workspace.body_set();
+
+            let mut cached_eval = None;
+            if let Some(rel_vel) = constraint.relative_normal_velocity(bodies_view, &body_view) {
+                const STATIC_RELVEL_EPSILON: Real = 1.0e-6;
+                let state = constraint.state();
+                let c_val = constraint.evaluate(bodies_view, &body_view);
+                cached_eval = Some(c_val);
+                if rel_vel.abs() <= STATIC_RELVEL_EPSILON
+                    && c_val >= -STATIC_RELVEL_EPSILON
+                    && state.lambda.abs() <= STATIC_RELVEL_EPSILON
+                    && (state.stiffness - self.params.stiffness_min).abs() <= Real::EPSILON
+                {
+                    return;
+                }
+            }
 
             for handle in handles.iter().copied() {
                 if let Some(entry_index) = self.workspace.body_map.get(&handle).copied() {
@@ -107,7 +130,7 @@ impl AvbdSolver {
                 if state.stiffness <= 0.0 {
                     0.0
                 } else {
-                    1.0 / state.stiffness
+                    1.0 / (state.stiffness * self.dt * self.dt)
                 }
             };
 
@@ -124,14 +147,16 @@ impl AvbdSolver {
                 return;
             }
 
-            let c_val = constraint.evaluate(bodies_view, &body_view);
+            let c_val = cached_eval.unwrap_or_else(|| constraint.evaluate(bodies_view, &body_view));
             let state = constraint.state();
             let alpha_tilde = compliance;
-            let delta_lambda = -(c_val + alpha_tilde * state.lambda) / denominator;
-            let updated_lambda = state.lambda + delta_lambda;
+            let raw_delta_lambda = -(c_val + alpha_tilde * state.lambda) / denominator;
+            let raw_lambda = state.lambda + raw_delta_lambda;
+            let projected_lambda = constraint.project_lambda(raw_lambda);
+            let delta_lambda = projected_lambda - state.lambda;
             let updated_stiffness =
                 clamp_stiffness(state.stiffness * self.params.beta, &self.params);
-            (delta_lambda, updated_lambda, updated_stiffness)
+            (delta_lambda, projected_lambda, updated_stiffness)
         };
 
         for (entry_index, minv_grad) in self.entry_scratch.iter().zip(self.minv_scratch.iter()) {
@@ -140,7 +165,7 @@ impl AvbdSolver {
         }
 
         let state = constraint.state_mut();
-        state.lambda = new_lambda;
+        state.lambda = projected_lambda;
         state.stiffness = new_stiffness;
     }
 }
@@ -183,9 +208,13 @@ impl SolverWorkspace {
                 }
 
                 let initial_pose = rb.pos.position;
-                let predicted_pose = rb
-                    .pos
-                    .integrate_forces_and_velocities(dt, &rb.forces, &rb.vels, &rb.mprops);
+                let initial_linvel = rb.vels.linvel;
+                let predicted_vels = rb.forces.integrate(dt, &rb.vels, &rb.mprops);
+                let predicted_pose = predicted_vels.integrate(
+                    dt,
+                    &rb.pos.position,
+                    &rb.mprops.local_mprops.local_com,
+                );
 
                 rb.pos.next_position = predicted_pose;
 
@@ -195,6 +224,8 @@ impl SolverWorkspace {
                     rb.mprops.effective_world_inv_inertia,
                     initial_pose,
                     predicted_pose,
+                    initial_linvel,
+                    predicted_vels.linvel,
                 );
 
                 let index = self.bodies.len();

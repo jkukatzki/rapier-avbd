@@ -1,15 +1,15 @@
 use crate::dynamics::solver::SolverVel;
 use crate::dynamics::solver::joint_constraint::JointConstraintHelper;
+use crate::dynamics::solver::solver_body::SolverBodies;
 use crate::dynamics::{
     GenericJoint, IntegrationParameters, JointAxesMask, JointGraphEdge, JointIndex,
 };
 use crate::math::{AngVector, AngularInertia, DIM, Isometry, Point, Real, SPATIAL_DIM, Vector};
-use crate::utils::{SimdDot, SimdRealCopy};
-use crate::dynamics::solver::solver_body::SolverBodies;
 #[cfg(feature = "simd-is-enabled")]
 use crate::math::{SIMD_WIDTH, SimdReal};
 #[cfg(feature = "dim2")]
 use crate::num::Zero;
+use crate::utils::{SimdDot, SimdRealCopy};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum WritebackId {
