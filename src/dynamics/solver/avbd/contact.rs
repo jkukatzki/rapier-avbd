@@ -1,10 +1,10 @@
 use std::ptr::NonNull;
 
-#[cfg(feature = "dim3")]
-use crate::dynamics::solver::contact_constraint::compute_tangent_contact_directions;
 use crate::dynamics::{RigidBodyHandle, RigidBodySet};
 use crate::geometry::{ContactManifold, ContactManifoldIndex, SolverContact};
 use crate::math::{ANG_DIM, AngVector, DIM, Isometry, Point, Real, SPATIAL_DIM, Vector};
+#[cfg(feature = "dim3")]
+use crate::utils::SimdBasis;
 
 use super::{AvbdBodySet, AvbdConstraint, AvbdConstraintState};
 
@@ -150,9 +150,7 @@ impl AvbdContactConstraint {
 
             #[cfg(feature = "dim3")]
             {
-                let zeros = Vector::zeros();
-                let dirs =
-                    compute_tangent_contact_directions(&manifold.data.normal, &zeros, &zeros);
+                let dirs = compute_contact_tangent_basis(&manifold.data.normal);
                 tangent_directions[0] = dirs[0];
                 if TANGENT_DOF > 1 {
                     tangent_directions[1] = dirs[1];
@@ -265,6 +263,13 @@ impl AvbdContactConstraint {
             Some(if slot == 0 { -cross } else { cross })
         }
     }
+}
+
+#[cfg(feature = "dim3")]
+fn compute_contact_tangent_basis(normal: &Vector<Real>) -> [Vector<Real>; 2] {
+    let tangent = normal.orthonormal_vector();
+    let bitangent = normal.cross(&tangent);
+    [tangent, bitangent]
 }
 
 impl AvbdConstraint for AvbdContactConstraint {
