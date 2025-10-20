@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Rapier AVBD Demo</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background-color: #101014;
+        font-family: sans-serif;
+      }
+      #overlay {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        color: #eef1ff;
+        background: rgba(0, 0, 0, 0.45);
+        padding: 10px 14px;
+        border-radius: 6px;
+        line-height: 1.4;
+        max-width: 320px;
+      }
+      canvas {
+        display: block;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="overlay">
+      <strong>Rapier AVBD Demo</strong>
+      <p>
+        Toggle the import below to switch between the npm package and the local AVBD build. The
+        JavaScript scene drives both variants with the same API surface.
+      </p>
+      <p>
+        Uncomment the local import once <code>wasm-pack</code> has produced
+        <code>rapier-wasm-avbd/pkg</code>.
+      </p>
+    </div>
+    <script type="module">
+      import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js';
+
+      // npm-hosted Rapier (official release)
+      import initRapier, {
+        ColliderDesc,
+        JointData,
+        RigidBodyDesc,
+        Vector3,
+        World,
+      } from 'https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.14.0/rapier.js';
+
+      // Local AVBD build (uncomment to use the wasm-pack output)
+      // import initRapier, {
+      //   ColliderDesc,
+      //   JointData,
+      //   RigidBodyDesc,
+      //   Vector3,
+      //   World,
+      // } from '../rapier-wasm-avbd/pkg/rapier_wasm_avbd.js';
+
+      async function main() {
+        await initRapier();
+
+        const gravity = Vector3.y(-9.81);
+        const world = new World(gravity);
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x181c1f);
+
+        const camera = new THREE.PerspectiveCamera(
+          55,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          200,
+        );
+        camera.position.set(10, 12, 16);
+        camera.lookAt(0, 4, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+        scene.add(ambient);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(12, 18, 6);
+        scene.add(dirLight);
+
+        const groundGeometry = new THREE.BoxGeometry(40, 1, 40);
+        const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x3a4047 });
+        const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
+        groundMesh.receiveShadow = true;
+        groundMesh.position.set(0, -0.5, 0);
+        scene.add(groundMesh);
+
+        const ground = world.createRigidBody(RigidBodyDesc.fixed());
+        world.createCollider(ColliderDesc.cuboid(20, 0.5, 20), ground);
+
+        const bodies = [];
+
+        const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+        const boxMaterial = new THREE.MeshStandardMaterial({ color: 0x62c5ff });
+        const boxMesh = new THREE.InstancedMesh(boxGeometry, boxMaterial, 32);
+        boxMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        scene.add(boxMesh);
+
+        for (let i = 0; i < 8; i++) {
+          const body = world.createRigidBody(
+            RigidBodyDesc.dynamic().setTranslation(0, 1 + i * 1.2, 0),
+          );
+          world.createCollider(ColliderDesc.cuboid(0.5, 0.5, 0.5), body);
+          bodies.push(body);
+        }
+
+        const pendulumAnchor = world.createRigidBody(
+          RigidBodyDesc.fixed().setTranslation(-4.0, 10.0, 0.0),
+        );
+        const pendulum = world.createRigidBody(
+          RigidBodyDesc.dynamic()
+            .setTranslation(-4.0, 6.0, 0.0)
+            .setLinearDamping(0.01),
+        );
+        world.createCollider(ColliderDesc.capsule(2.0, 0.2), pendulum);
+        bodies.push(pendulum);
+
+        world.createImpulseJoint(
+          JointData.ball(Vector3.zero()),
+          pendulumAnchor,
+          pendulum,
+          true,
+        );
+
+        const chainRoot = world.createRigidBody(
+          RigidBodyDesc.dynamic().setTranslation(4.0, 6.5, 0.0),
+        );
+        world.createCollider(ColliderDesc.cuboid(0.5, 0.5, 0.5), chainRoot);
+        bodies.push(chainRoot);
+
+        let previous = chainRoot;
+        for (let i = 1; i <= 5; i++) {
+          const element = world.createRigidBody(
+            RigidBodyDesc.dynamic().setTranslation(4.0, 6.5 - i * 1.1, 0.0),
+          );
+          world.createCollider(ColliderDesc.cuboid(0.4, 0.4, 0.4), element);
+          world.createImpulseJoint(
+            JointData.revolute(Vector3.x(1.0), 0.0),
+            previous,
+            element,
+            true,
+          );
+          bodies.push(element);
+          previous = element;
+        }
+
+        const tmpMatrix = new THREE.Matrix4();
+
+        function step() {
+          world.step();
+
+          bodies.forEach((body, index) => {
+            const position = body.translation();
+            const rotation = body.rotation();
+            tmpMatrix.compose(
+              new THREE.Vector3(position.x, position.y, position.z),
+              new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w),
+              new THREE.Vector3(1, 1, 1),
+            );
+            boxMesh.setMatrixAt(index, tmpMatrix);
+          });
+          boxMesh.instanceMatrix.needsUpdate = true;
+
+          renderer.render(scene, camera);
+          requestAnimationFrame(step);
+        }
+
+        step();
+
+        window.addEventListener('resize', () => {
+          camera.aspect = window.innerWidth / window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+      }
+
+      main();
+    </script>
+  </body>
+</html>
