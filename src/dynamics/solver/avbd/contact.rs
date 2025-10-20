@@ -6,7 +6,7 @@ use crate::dynamics::{RigidBodyHandle, RigidBodySet};
 use crate::geometry::{ContactManifold, ContactManifoldIndex, SolverContact};
 use crate::math::{ANG_DIM, AngVector, DIM, Isometry, Point, Real, SPATIAL_DIM, Vector};
 
-use super::{AvbdBodySet, AvbdConstraint, AvbdConstraintState};
+use super::{AvbdBodySet, AvbdConstraint, AvbdConstraintState, AvbdJointConstraint};
 
 const LINEAR_DOF: usize = SPATIAL_DIM - ANG_DIM;
 const TANGENT_DOF: usize = DIM - 1;
@@ -17,6 +17,8 @@ pub enum AvbdAnyConstraint {
     Contact(Box<AvbdContactConstraint>),
     /// Tangential friction constraint paired with a contact manifold point.
     ContactFriction(AvbdContactFrictionConstraint),
+    /// Joint constraint derived from impulse joint definitions.
+    Joint(Box<AvbdJointConstraint>),
 }
 
 impl AvbdConstraint for AvbdAnyConstraint {
@@ -24,6 +26,7 @@ impl AvbdConstraint for AvbdAnyConstraint {
         match self {
             AvbdAnyConstraint::Contact(c) => c.bodies(),
             AvbdAnyConstraint::ContactFriction(c) => c.bodies(),
+            AvbdAnyConstraint::Joint(c) => c.bodies(),
         }
     }
 
@@ -31,6 +34,7 @@ impl AvbdConstraint for AvbdAnyConstraint {
         match self {
             AvbdAnyConstraint::Contact(c) => c.state_mut(),
             AvbdAnyConstraint::ContactFriction(c) => c.state_mut(),
+            AvbdAnyConstraint::Joint(c) => c.state_mut(),
         }
     }
 
@@ -38,6 +42,7 @@ impl AvbdConstraint for AvbdAnyConstraint {
         match self {
             AvbdAnyConstraint::Contact(c) => c.state(),
             AvbdAnyConstraint::ContactFriction(c) => c.state(),
+            AvbdAnyConstraint::Joint(c) => c.state(),
         }
     }
 
@@ -45,6 +50,7 @@ impl AvbdConstraint for AvbdAnyConstraint {
         match self {
             AvbdAnyConstraint::Contact(c) => c.evaluate(bodies, workspace),
             AvbdAnyConstraint::ContactFriction(c) => c.evaluate(bodies, workspace),
+            AvbdAnyConstraint::Joint(c) => c.evaluate(bodies, workspace),
         }
     }
 
@@ -58,6 +64,7 @@ impl AvbdConstraint for AvbdAnyConstraint {
         match self {
             AvbdAnyConstraint::Contact(c) => c.gradient(bodies, workspace, body, out),
             AvbdAnyConstraint::ContactFriction(c) => c.gradient(bodies, workspace, body, out),
+            AvbdAnyConstraint::Joint(c) => c.gradient(bodies, workspace, body, out),
         }
     }
 
@@ -71,6 +78,7 @@ impl AvbdConstraint for AvbdAnyConstraint {
         match self {
             AvbdAnyConstraint::Contact(c) => c.hessian(bodies, workspace, body, out),
             AvbdAnyConstraint::ContactFriction(c) => c.hessian(bodies, workspace, body, out),
+            AvbdAnyConstraint::Joint(c) => c.hessian(bodies, workspace, body, out),
         }
     }
 
@@ -78,6 +86,7 @@ impl AvbdConstraint for AvbdAnyConstraint {
         match self {
             AvbdAnyConstraint::Contact(c) => c.project_lambda(lambda),
             AvbdAnyConstraint::ContactFriction(c) => c.project_lambda(lambda),
+            AvbdAnyConstraint::Joint(c) => c.project_lambda(lambda),
         }
     }
 
@@ -89,6 +98,7 @@ impl AvbdConstraint for AvbdAnyConstraint {
         match self {
             AvbdAnyConstraint::Contact(c) => c.relative_normal_velocity(bodies, workspace),
             AvbdAnyConstraint::ContactFriction(c) => c.relative_normal_velocity(bodies, workspace),
+            AvbdAnyConstraint::Joint(c) => c.relative_normal_velocity(bodies, workspace),
         }
     }
 }

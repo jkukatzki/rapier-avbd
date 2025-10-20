@@ -9,6 +9,7 @@ use crate::dynamics::{
 use crate::geometry::{BroadPhaseBvh, ColliderBuilder, ColliderHandle, ColliderSet, NarrowPhase};
 use crate::math::{AngVector, Real, Vector};
 use crate::pipeline::PhysicsPipeline;
+use crate::prelude::{FixedJointBuilder, Point, SPATIAL_DIM};
 
 #[cfg(feature = "dim3")]
 use crate::geometry::ContactManifoldExt;
@@ -87,6 +88,32 @@ fn avbd_matches_impulse_baseline() {
 }
 
 #[cfg(feature = "dim3")]
+#[test]
+fn avbd_fixed_joint_resists_gravity() {
+    let outcome = run_fixed_joint_test(180, SolverBackend::Avbd);
+
+    assert_relative_eq!(
+        outcome.translation,
+        outcome.anchor,
+        epsilon = 2.0e-3,
+        max_relative = 2.0e-3,
+    );
+
+    let zero_ang = AngVector::zeros();
+    assert_relative_eq!(
+        outcome.angvel,
+        zero_ang,
+        epsilon = 5.0e-3,
+        max_relative = 5.0e-3,
+    );
+
+    assert!(
+        outcome.impulse_norm > 1.0e-3,
+        "joint impulses were not written back",
+    );
+}
+
+#[cfg(feature = "dim3")]
 struct DropOutcome {
     translation: Vector<Real>,
     angvel: AngVector<Real>,
@@ -154,6 +181,92 @@ fn run_drop_test(steps: usize, backend: SolverBackend) -> DropOutcome {
         mass,
         gravity,
         dt: integration_parameters.dt,
+    }
+}
+
+#[cfg(feature = "dim3")]
+struct JointOutcome {
+    translation: Vector<Real>,
+    angvel: AngVector<Real>,
+    anchor: Vector<Real>,
+    impulse_norm: Real,
+}
+
+#[cfg(feature = "dim3")]
+fn run_fixed_joint_test(steps: usize, backend: SolverBackend) -> JointOutcome {
+    let mut pipeline = PhysicsPipeline::new();
+    let gravity = Vector::new(0.0, -9.81, 0.0);
+    let mut integration_parameters = IntegrationParameters::default();
+    integration_parameters.dt = 1.0 / 60.0;
+    integration_parameters.solver_backend = backend;
+
+    let mut islands = IslandManager::new();
+    let mut broad_phase = BroadPhaseBvh::new();
+    let mut narrow_phase = NarrowPhase::new();
+    let mut bodies = RigidBodySet::new();
+    let mut colliders = ColliderSet::new();
+    let mut impulse_joints = ImpulseJointSet::new();
+    let mut multibody_joints = MultibodyJointSet::new();
+    let mut ccd_solver = CCDSolver::new();
+
+    let (ground_body, ground_collider) = create_ground(&mut bodies, &mut colliders);
+
+    let anchor_offset = Vector::new(0.0, 2.0, 0.0);
+    let cube_body = bodies.insert(
+        RigidBodyBuilder::dynamic()
+            .translation(anchor_offset)
+            .build(),
+    );
+    let cube_collider = colliders.insert_with_parent(
+        ColliderBuilder::cuboid(0.5, 0.5, 0.5).build(),
+        cube_body,
+        &mut bodies,
+    );
+
+    let joint = FixedJointBuilder::new()
+        .local_anchor1(Point::from(anchor_offset))
+        .local_anchor2(Point::origin())
+        .build();
+    let joint_handle = impulse_joints.insert(ground_body, cube_body, joint, true);
+
+    for _ in 0..steps {
+        pipeline.step(
+            &gravity,
+            &integration_parameters,
+            &mut islands,
+            &mut broad_phase,
+            &mut narrow_phase,
+            &mut bodies,
+            &mut colliders,
+            &mut impulse_joints,
+            &mut multibody_joints,
+            &mut ccd_solver,
+            &(),
+            &(),
+        );
+    }
+
+    let cube_rb = &bodies[cube_body];
+    let translation = *cube_rb.translation();
+    let angvel = *cube_rb.angvel();
+    let anchor = anchor_offset;
+
+    let joint = impulse_joints.get(joint_handle).unwrap();
+    let mut accum = 0.0;
+    for i in 0..SPATIAL_DIM {
+        let val = joint.impulses[i];
+        accum += val * val;
+    }
+    let impulse_norm = accum.sqrt();
+
+    // Touch the manifold so warmstart caches remain active for comparisons.
+    let _ = narrow_phase.contact_pair(ground_collider, cube_collider);
+
+    JointOutcome {
+        translation,
+        angvel,
+        anchor,
+        impulse_norm,
     }
 }
 
