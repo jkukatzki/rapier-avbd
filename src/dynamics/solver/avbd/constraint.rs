@@ -1,6 +1,8 @@
 use crate::dynamics::{RigidBodyHandle, RigidBodySet};
 use crate::math::{Real, SPATIAL_DIM};
 
+use super::AvbdBodySet;
+
 #[cfg(feature = "serde-serialize")]
 use serde::{Deserialize, Serialize};
 
@@ -42,15 +44,22 @@ pub trait AvbdConstraint {
     fn state(&self) -> &AvbdConstraintState;
 
     /// Evaluates the constraint function \(C(x)\) for the current body configuration.
-    fn evaluate(&self, bodies: &RigidBodySet) -> Real;
+    fn evaluate(&self, bodies: &RigidBodySet, workspace: &AvbdBodySet) -> Real;
 
     /// Computes the gradient of the constraint with respect to the specified body.
-    fn gradient(&self, bodies: &RigidBodySet, body: RigidBodyHandle, out: &mut [Real; AVBD_DOF]);
+    fn gradient(
+        &self,
+        bodies: &RigidBodySet,
+        workspace: &AvbdBodySet,
+        body: RigidBodyHandle,
+        out: &mut [Real; AVBD_DOF],
+    );
 
     /// Computes (or approximates) the Hessian contribution for the specified body.
     fn hessian(
         &self,
         bodies: &RigidBodySet,
+        workspace: &AvbdBodySet,
         body: RigidBodyHandle,
         out: &mut [[Real; AVBD_DOF]; AVBD_DOF],
     );

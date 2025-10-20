@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Rapier AVBD Feature Demo</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: sans-serif;
+        background: #0b0e1a;
+        color: #e8ecff;
+      }
+
+      header {
+        position: absolute;
+        top: 0.75rem;
+        left: 1rem;
+        z-index: 5;
+        background: rgba(12, 16, 32, 0.72);
+        padding: 0.75rem 1rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.35);
+      }
+
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Rapier + AVBD</strong>
+      <div>
+        Toggle the import in <code>assets/avbd_three_demo.html</code> to switch between the
+        published npm build and your locally built wasm package. The JavaScript API is identical.
+      </div>
+    </header>
+    <canvas id="viewport"></canvas>
+
+    <script type="module">
+      import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js';
+      // Use the official npm build:
+      import initRapier from 'https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.16.1/rapier3d.js';
+      // Or uncomment the next line to load the locally built wasm package produced by wasm-pack:
+      // import initRapier from '../rapier-wasm-avbd/pkg/rapier3d.js';
+
+      const canvas = document.getElementById('viewport');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0f1628);
+
+      const camera = new THREE.PerspectiveCamera(
+        55,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        200.0
+      );
+      camera.position.set(8, 8, 12);
+
+      const ambient = new THREE.AmbientLight(0x24324d, 0.6);
+      scene.add(ambient);
+      const keyLight = new THREE.DirectionalLight(0xffffff, 1.1);
+      keyLight.position.set(6, 10, 4);
+      scene.add(keyLight);
+
+      const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x152238 });
+      const groundGeometry = new THREE.BoxGeometry(40, 0.2, 40);
+      const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
+      groundMesh.position.y = -0.1;
+      groundMesh.receiveShadow = true;
+      scene.add(groundMesh);
+
+      const boxMaterial = new THREE.MeshStandardMaterial({ color: 0x5bc0f8 });
+      const boxGeometry = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+      const boxCount = 6;
+      const boxMesh = new THREE.InstancedMesh(boxGeometry, boxMaterial, boxCount);
+      boxMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      scene.add(boxMesh);
+
+      const sphereMaterial = new THREE.MeshStandardMaterial({ color: 0xff7b9c });
+      const sphereGeometry = new THREE.SphereGeometry(0.35, 24, 24);
+      const sphereMesh = new THREE.InstancedMesh(sphereGeometry, sphereMaterial, 1);
+      sphereMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      scene.add(sphereMesh);
+
+      const matrices = {
+        box: new THREE.Matrix4(),
+        sphere: new THREE.Matrix4(),
+        scale: new THREE.Vector3(1, 1, 1),
+        position: new THREE.Vector3(),
+        quaternion: new THREE.Quaternion(),
+      };
+
+      const resize = () => {
+        const { innerWidth: w, innerHeight: h } = window;
+        renderer.setSize(w, h);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      };
+      window.addEventListener('resize', resize);
+
+      const init = async () => {
+        const RAPIER = await initRapier();
+        const world = new RAPIER.World({ x: 0.0, y: -9.81, z: 0.0 });
+
+        const groundBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+        world.createCollider(RAPIER.ColliderDesc.cuboid(20.0, 0.1, 20.0), groundBody);
+
+        const bodies = [];
+        for (let i = 0; i < boxCount; i += 1) {
+          const x = -1.2 + i * 0.6;
+          const y = 2.0 + 0.4 * i;
+          const rbDesc = RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y, 0.0);
+          const body = world.createRigidBody(rbDesc);
+          world.createCollider(RAPIER.ColliderDesc.cuboid(0.3, 0.3, 0.3), body);
+          bodies.push(body);
+        }
+
+        const pendulum = world.createRigidBody(
+          RAPIER.RigidBodyDesc.dynamic().setTranslation(2.0, 4.5, 0.0)
+        );
+        world.createCollider(RAPIER.ColliderDesc.ball(0.35), pendulum);
+
+        if (bodies.length >= 2) {
+          const joint = RAPIER.JointData.revolute(
+            { x: 0.0, y: 0.3, z: 0.0 },
+            { x: -0.3, y: -0.3, z: 0.0 },
+            { x: 0.0, y: 0.0, z: 1.0 }
+          );
+          world.createImpulseJoint(joint, bodies[0], bodies[1], true);
+        }
+
+        const pendulumJoint = RAPIER.JointData.spherical({ x: 0.0, y: 0.0, z: 0.0 }, {
+          x: 0.0,
+          y: -0.5,
+          z: 0.0,
+        });
+        world.createImpulseJoint(pendulumJoint, groundBody, pendulum, true);
+
+        const updateInstances = () => {
+          matrices.position.set(0, 0, 0);
+          matrices.quaternion.identity();
+
+          for (let i = 0; i < bodies.length; i += 1) {
+            const body = bodies[i];
+            const translation = body.translation();
+            const rotation = body.rotation();
+            matrices.position.set(translation.x, translation.y, translation.z);
+            matrices.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+            matrices.box.compose(matrices.position, matrices.quaternion, matrices.scale);
+            boxMesh.setMatrixAt(i, matrices.box);
+          }
+          boxMesh.instanceMatrix.needsUpdate = true;
+
+          const pendulumPosition = pendulum.translation();
+          const pendulumRotation = pendulum.rotation();
+          matrices.position.set(
+            pendulumPosition.x,
+            pendulumPosition.y,
+            pendulumPosition.z
+          );
+          matrices.quaternion.set(
+            pendulumRotation.x,
+            pendulumRotation.y,
+            pendulumRotation.z,
+            pendulumRotation.w
+          );
+          matrices.sphere.compose(matrices.position, matrices.quaternion, matrices.scale);
+          sphereMesh.setMatrixAt(0, matrices.sphere);
+          sphereMesh.instanceMatrix.needsUpdate = true;
+        };
+
+        const step = () => {
+          world.step();
+          updateInstances();
+          renderer.render(scene, camera);
+        };
+
+        resize();
+        renderer.setAnimationLoop(step);
+      };
+
+      init().catch((error) => {
+        console.error('Failed to initialise Rapier demo', error);
+      });
+    </script>
+  </body>
+</html>
