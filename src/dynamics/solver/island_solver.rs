@@ -116,7 +116,7 @@ mod avbd_impl {
     use crate::dynamics::SolverBackend;
     use crate::dynamics::solver::avbd::{
         AvbdAnyConstraint, AvbdConstraint, AvbdContactConstraint, AvbdContactFrictionConstraint,
-        AvbdSolver,
+        AvbdSolver, build_joint_constraints,
     };
     use crate::dynamics::{
         IntegrationParameters, JointGraphEdge, JointIndex, RigidBodySet, RigidBodyType,
@@ -200,6 +200,11 @@ mod avbd_impl {
                 manifold_indices,
                 solver_params.stiffness_min,
             );
+            self.build_joint_constraints(
+                &*impulse_joints,
+                joint_indices,
+                solver_params.stiffness_min,
+            );
             counters.solver.velocity_assembly_time.pause();
 
             counters.solver.velocity_resolution_time.resume();
@@ -215,6 +220,7 @@ mod avbd_impl {
 
             counters.solver.velocity_writeback_time.resume();
             self.writeback_contacts(manifolds);
+            self.writeback_joints(impulse_joints);
             counters.solver.velocity_writeback_time.pause();
             #[cfg(all(feature = "solver_avbd", not(test)))]
             let _ = impulse_joints;
@@ -256,6 +262,15 @@ mod avbd_impl {
                     }
                 }
             }
+        }
+
+        fn build_joint_constraints(
+            &mut self,
+            joints: &[JointGraphEdge],
+            joint_indices: &[JointIndex],
+            stiffness: Real,
+        ) {
+            build_joint_constraints(&mut self.constraints, joints, joint_indices, stiffness);
         }
 
         fn writeback_contacts(&mut self, manifolds: &mut [&mut ContactManifold]) {
@@ -311,6 +326,15 @@ mod avbd_impl {
                             }
                         }
                     }
+                    AvbdAnyConstraint::Joint(_) => {}
+                }
+            }
+        }
+
+        fn writeback_joints(&mut self, joints: &mut [JointGraphEdge]) {
+            for constraint in &self.constraints {
+                if let AvbdAnyConstraint::Joint(joint) = constraint {
+                    joint.writeback(joints);
                 }
             }
         }
