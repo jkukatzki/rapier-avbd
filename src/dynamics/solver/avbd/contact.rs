@@ -346,8 +346,19 @@ impl AvbdConstraint for AvbdContactConstraint {
         }
 
         for row in out.iter_mut() {
-            for entry in row.iter_mut() {
-                *entry = 0.0;
+            row.fill(0.0);
+        }
+
+        let stiffness = self.state.stiffness.max(0.0);
+        if stiffness <= 0.0 {
+            return;
+        }
+
+        let mut grad = [0.0; SPATIAL_DIM];
+        self.gradient(_bodies, _workspace, body, &mut grad);
+        for row in 0..SPATIAL_DIM {
+            for col in 0..SPATIAL_DIM {
+                out[row][col] = stiffness * grad[row] * grad[col];
             }
         }
     }
@@ -599,8 +610,19 @@ impl AvbdConstraint for AvbdContactFrictionConstraint {
         }
 
         for row in out.iter_mut() {
-            for entry in row.iter_mut() {
-                *entry = 0.0;
+            row.fill(0.0);
+        }
+
+        let stiffness = self.state.stiffness.max(0.0);
+        if stiffness <= 0.0 {
+            return;
+        }
+
+        let mut grad = [0.0; SPATIAL_DIM];
+        self.gradient(_bodies, _workspace, body, &mut grad);
+        for row in 0..SPATIAL_DIM {
+            for col in 0..SPATIAL_DIM {
+                out[row][col] = stiffness * grad[row] * grad[col];
             }
         }
     }
