@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::mem;
 
 use crate::dynamics::{RigidBodyHandle, RigidBodySet, RigidBodyType};
 use crate::math::{ANG_DIM, AngVector, Real, SPATIAL_DIM, Vector};
 use crate::na;
 #[cfg(feature = "dim3")]
 use crate::utils::SimdAngularInertia;
+use rustc_hash::FxHashSet;
 
 use super::workspace::{WorkspaceBody, new_workspace_body};
 use super::{AVBD_DOF, AvbdBodySet, AvbdConstraint, AvbdSolverParams};
@@ -15,9 +17,9 @@ const LINEAR_DOF: usize = SPATIAL_DIM - ANG_DIM;
 pub struct AvbdSolver {
     params: AvbdSolverParams,
     workspace: SolverWorkspace,
-    grad_scratch: Vec<[Real; AVBD_DOF]>,
-    minv_scratch: Vec<[Real; AVBD_DOF]>,
-    entry_scratch: Vec<usize>,
+    color_buckets: Vec<Vec<usize>>,
+    bucket_body_sets: Vec<FxHashSet<RigidBodyHandle>>,
+    constraint_cache: Vec<ConstraintCache>,
     dt: Real,
 }
 
@@ -27,9 +29,9 @@ impl AvbdSolver {
         Self {
             params,
             workspace: SolverWorkspace::default(),
-            grad_scratch: Vec::new(),
-            minv_scratch: Vec::new(),
-            entry_scratch: Vec::new(),
+            color_buckets: Vec::new(),
+            bucket_body_sets: Vec::new(),
+            constraint_cache: Vec::new(),
             dt: 1.0,
         }
     }
@@ -69,17 +71,35 @@ impl AvbdSolver {
             state.stiffness = clamp_stiffness(state.stiffness * stiffness_decay, &self.params);
         }
 
+        self.build_color_buckets(constraints);
+        self.prepare_constraint_cache(bodies, constraints);
+
+        let buckets = mem::take(&mut self.color_buckets);
+
         for _ in 0..self.params.iterations {
-            for constraint in constraints.iter_mut() {
-                self.solve_constraint(bodies, constraint);
+            for bucket in buckets.iter() {
+                for &constraint_index in bucket {
+                    let mut cache = mem::take(&mut self.constraint_cache[constraint_index]);
+                    {
+                        let constraint = &mut constraints[constraint_index];
+                        self.solve_constraint(bodies, constraint, &mut cache);
+                    }
+                    self.constraint_cache[constraint_index] = cache;
+                }
             }
         }
+
+        self.color_buckets = buckets;
 
         self.workspace.writeback(bodies, dt);
     }
 
-    fn solve_constraint<C>(&mut self, bodies: &mut RigidBodySet, constraint: &mut C)
-    where
+    fn solve_constraint<C>(
+        &mut self,
+        bodies: &mut RigidBodySet,
+        constraint: &mut C,
+        cache: &mut ConstraintCache,
+    ) where
         C: AvbdConstraint,
     {
         let handles = constraint.bodies();
@@ -87,9 +107,9 @@ impl AvbdSolver {
             return;
         }
 
-        self.grad_scratch.clear();
-        self.minv_scratch.clear();
-        self.entry_scratch.clear();
+        if cache.bodies.is_empty() {
+            return;
+        }
 
         let bodies_view = &*bodies;
         let (delta_lambda, projected_lambda, new_stiffness) = {
@@ -110,21 +130,6 @@ impl AvbdSolver {
                 }
             }
 
-            for handle in handles.iter().copied() {
-                if let Some(entry_index) = self.workspace.body_map.get(&handle).copied() {
-                    let mut grad = [0.0; AVBD_DOF];
-                    constraint.gradient(bodies_view, &body_view, handle, &mut grad);
-                    let minv_grad = self.workspace.mass_inverse(entry_index, &grad);
-                    self.entry_scratch.push(entry_index);
-                    self.grad_scratch.push(grad);
-                    self.minv_scratch.push(minv_grad);
-                }
-            }
-
-            if self.entry_scratch.is_empty() {
-                return;
-            }
-
             let compliance = {
                 let state = constraint.state();
                 if state.stiffness <= 0.0 {
@@ -135,12 +140,9 @@ impl AvbdSolver {
             };
 
             let mut denominator = compliance;
-            for (grad, minv_grad) in self.grad_scratch.iter().zip(self.minv_scratch.iter()) {
-                let mut acc = 0.0;
-                for i in 0..AVBD_DOF {
-                    acc += grad[i] * minv_grad[i];
-                }
-                denominator += acc;
+            for body_cache in cache.bodies.iter() {
+                denominator += body_cache.grad_minv_dot
+                    + diag_projection(&body_cache.gradient, &body_cache.spd_diagonal);
             }
 
             if denominator <= 0.0 {
@@ -159,15 +161,241 @@ impl AvbdSolver {
             (delta_lambda, projected_lambda, updated_stiffness)
         };
 
-        for (entry_index, minv_grad) in self.entry_scratch.iter().zip(self.minv_scratch.iter()) {
-            self.workspace
-                .apply_body_delta(*entry_index, delta_lambda, minv_grad);
+        for body_cache in cache.bodies.iter() {
+            self.workspace.apply_body_delta(
+                body_cache.entry_index,
+                delta_lambda,
+                &body_cache.minv_grad,
+            );
         }
 
         let state = constraint.state_mut();
+        let previous_stiffness = state.stiffness;
         state.lambda = projected_lambda;
         state.stiffness = new_stiffness;
+
+        if previous_stiffness > 0.0 {
+            let ratio = if new_stiffness <= 0.0 {
+                0.0
+            } else {
+                new_stiffness / previous_stiffness
+            };
+            for body_cache in cache.bodies.iter_mut() {
+                for diag_entry in body_cache.spd_diagonal.iter_mut() {
+                    *diag_entry *= ratio;
+                }
+            }
+        } else if new_stiffness > 0.0 {
+            for body_cache in cache.bodies.iter_mut() {
+                body_cache.spd_diagonal = unit_spd_diagonal(&body_cache.gradient);
+                for diag_entry in body_cache.spd_diagonal.iter_mut() {
+                    *diag_entry *= new_stiffness;
+                }
+            }
+        } else {
+            for body_cache in cache.bodies.iter_mut() {
+                body_cache.spd_diagonal.fill(0.0);
+            }
+        }
+
+        cache.stiffness_snapshot = state.stiffness;
     }
+
+    fn build_color_buckets<C>(&mut self, constraints: &[C])
+    where
+        C: AvbdConstraint,
+    {
+        self.color_buckets.clear();
+        self.bucket_body_sets.clear();
+
+        for (index, constraint) in constraints.iter().enumerate() {
+            let bodies = constraint.bodies();
+
+            if bodies.is_empty() {
+                if self.color_buckets.is_empty() {
+                    self.color_buckets.push(vec![index]);
+                    self.bucket_body_sets.push(FxHashSet::default());
+                } else {
+                    self.color_buckets[0].push(index);
+                }
+                continue;
+            }
+
+            let mut assigned = false;
+            for (bucket_index, used_handles) in self.bucket_body_sets.iter_mut().enumerate() {
+                if bodies.iter().all(|handle| !used_handles.contains(handle)) {
+                    for handle in bodies {
+                        used_handles.insert(*handle);
+                    }
+                    self.color_buckets[bucket_index].push(index);
+                    assigned = true;
+                    break;
+                }
+            }
+
+            if !assigned {
+                let mut handles = FxHashSet::default();
+                for handle in bodies {
+                    handles.insert(*handle);
+                }
+                self.bucket_body_sets.push(handles);
+                self.color_buckets.push(vec![index]);
+            }
+        }
+    }
+
+    fn prepare_constraint_cache<C>(&mut self, bodies: &RigidBodySet, constraints: &[C])
+    where
+        C: AvbdConstraint,
+    {
+        if self.constraint_cache.len() > constraints.len() {
+            self.constraint_cache.truncate(constraints.len());
+        } else if self.constraint_cache.len() < constraints.len() {
+            self.constraint_cache
+                .resize_with(constraints.len(), ConstraintCache::default);
+        }
+
+        for cache in self.constraint_cache.iter_mut() {
+            cache.bodies.clear();
+            cache.stiffness_snapshot = 0.0;
+        }
+
+        let bodies_view = bodies;
+        let workspace_view = self.workspace.body_set();
+
+        for (index, constraint) in constraints.iter().enumerate() {
+            let cache = &mut self.constraint_cache[index];
+            cache.stiffness_snapshot = constraint.state().stiffness;
+
+            for handle in constraint.bodies() {
+                let Some(entry_index) = self.workspace.body_map.get(handle).copied() else {
+                    continue;
+                };
+
+                let mut gradient = [0.0; AVBD_DOF];
+                constraint.gradient(bodies_view, &workspace_view, *handle, &mut gradient);
+                let minv_grad = self.workspace.mass_inverse(entry_index, &gradient);
+                let grad_minv_dot = simd_dot(&gradient, &minv_grad);
+
+                let mut hessian = [[0.0; AVBD_DOF]; AVBD_DOF];
+                constraint.hessian(bodies_view, &workspace_view, *handle, &mut hessian);
+                let mut spd_diagonal = compute_spd_diagonal(&hessian);
+
+                if spd_diagonal
+                    .iter()
+                    .all(|entry| entry.abs() <= Real::EPSILON)
+                {
+                    spd_diagonal = unit_spd_diagonal(&gradient);
+                    for diag in spd_diagonal.iter_mut() {
+                        *diag *= cache.stiffness_snapshot.max(0.0);
+                    }
+                }
+
+                cache.bodies.push(ConstraintBodyCache {
+                    entry_index,
+                    gradient,
+                    minv_grad,
+                    grad_minv_dot,
+                    spd_diagonal,
+                });
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ConstraintBodyCache {
+    entry_index: usize,
+    gradient: [Real; AVBD_DOF],
+    minv_grad: [Real; AVBD_DOF],
+    grad_minv_dot: Real,
+    spd_diagonal: [Real; AVBD_DOF],
+}
+
+#[derive(Default)]
+struct ConstraintCache {
+    bodies: Vec<ConstraintBodyCache>,
+    stiffness_snapshot: Real,
+}
+
+fn diag_projection(gradient: &[Real; AVBD_DOF], diag: &[Real; AVBD_DOF]) -> Real {
+    let mut acc = 0.0;
+    for i in 0..AVBD_DOF {
+        acc += diag[i] * gradient[i] * gradient[i];
+    }
+    acc
+}
+
+fn compute_spd_diagonal(matrix: &[[Real; AVBD_DOF]; AVBD_DOF]) -> [Real; AVBD_DOF] {
+    let mut diag = [0.0; AVBD_DOF];
+    for row in 0..AVBD_DOF {
+        let mut sum = 0.0;
+        for col in 0..AVBD_DOF {
+            sum += matrix[row][col].abs();
+        }
+        diag[row] = sum;
+    }
+    diag
+}
+
+fn unit_spd_diagonal(gradient: &[Real; AVBD_DOF]) -> [Real; AVBD_DOF] {
+    let mut diag = [0.0; AVBD_DOF];
+    let total_abs: Real = gradient.iter().map(|g| g.abs()).sum();
+    for i in 0..AVBD_DOF {
+        diag[i] = gradient[i].abs() * total_abs;
+    }
+    diag
+}
+
+#[cfg(all(feature = "simd-is-enabled", not(feature = "f64")))]
+fn simd_dot(lhs: &[Real; AVBD_DOF], rhs: &[Real; AVBD_DOF]) -> Real {
+    use wide::f32x4;
+
+    let mut acc = f32x4::from(0.0);
+    let mut i = 0;
+    while i + 4 <= AVBD_DOF {
+        let a = f32x4::from_slice_unaligned(&lhs[i..]);
+        let b = f32x4::from_slice_unaligned(&rhs[i..]);
+        acc += a * b;
+        i += 4;
+    }
+
+    let mut sum: Real = acc.to_array().into_iter().sum();
+    while i < AVBD_DOF {
+        sum += lhs[i] * rhs[i];
+        i += 1;
+    }
+    sum
+}
+
+#[cfg(all(feature = "simd-is-enabled", feature = "f64"))]
+fn simd_dot(lhs: &[Real; AVBD_DOF], rhs: &[Real; AVBD_DOF]) -> Real {
+    use wide::f64x2;
+
+    let mut acc = f64x2::from(0.0);
+    let mut i = 0;
+    while i + 2 <= AVBD_DOF {
+        let a = f64x2::from_slice_unaligned(&lhs[i..]);
+        let b = f64x2::from_slice_unaligned(&rhs[i..]);
+        acc += a * b;
+        i += 2;
+    }
+
+    let mut sum: Real = acc.to_array().into_iter().sum();
+    while i < AVBD_DOF {
+        sum += lhs[i] * rhs[i];
+        i += 1;
+    }
+    sum
+}
+
+#[cfg(not(feature = "simd-is-enabled"))]
+fn simd_dot(lhs: &[Real; AVBD_DOF], rhs: &[Real; AVBD_DOF]) -> Real {
+    let mut sum = 0.0;
+    for i in 0..AVBD_DOF {
+        sum += lhs[i] * rhs[i];
+    }
+    sum
 }
 
 fn clamp_stiffness(value: Real, params: &AvbdSolverParams) -> Real {
